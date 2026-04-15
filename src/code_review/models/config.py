@@ -115,7 +115,7 @@ class AppConfig(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         env_nested_delimiter="__",
-        env_prefix="CODE_REVIEW_",
+        env_prefix="CODE_REVIEW__",
     )
 
     server: ServerConfig = Field(default_factory=ServerConfig)

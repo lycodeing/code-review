@@ -80,13 +80,16 @@ async def gitee_webhook(
     request: Request,
     x_gitee_token: str = Header(""),
     x_gitee_event: str = Header(""),
+    x_gitee_timestamp: str = Header(""),
 ):
     """Gitee Webhook 接收端点。"""
     config = request.app.state.config
     payload_bytes = await request.body()
 
     adapter = create_adapter(PlatformType.GITEE, config)
-    if not await adapter.verify_webhook_signature(payload_bytes, x_gitee_token):
+    if not await adapter.verify_webhook_signature(
+        payload_bytes, x_gitee_token, x_gitee_timestamp
+    ):
         raise HTTPException(status_code=401, detail="Invalid signature")
 
     payload = await request.json()

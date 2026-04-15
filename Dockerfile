@@ -10,16 +10,13 @@ RUN apt-get update && \
 # 安装 uv
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
-# 复制依赖声明
-COPY pyproject.toml .
-
-# 安装依赖
-RUN uv pip install --system --no-cache -e ".[dev]" || \
-    uv pip install --system --no-cache .
-
-# 复制源码
+# 先复制源码（hatchling 需要 src/ 来做 editable install）
+COPY pyproject.toml README.md ./
 COPY src/ src/
 COPY configs/ configs/
+
+# 安装依赖
+RUN uv pip install --system --no-cache .
 
 # 设置 Python 路径
 ENV PYTHONPATH=/app/src

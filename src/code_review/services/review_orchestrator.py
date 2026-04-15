@@ -47,15 +47,27 @@ class ReviewOrchestrator:
             summary_threshold=config.review.severity_threshold_for_summary,
             comment_mode=config.review.comment_mode,
         )
-        # 数据库引擎（延迟初始化）
-        self._engine = create_async_engine(
-            config.database.url, echo=config.database.echo,
-            pool_size=config.database.pool_size,
-        )
-        self._session_factory = async_sessionmaker(self._engine, expire_on_commit=False)
+        # 数据库引擎（延迟初始化，避免跨事件循环问题）
+        self._engine = None
+        self._session_factory = None
+
+    def _ensure_engine(self):
+        """确保引擎在当前事件循环中创建。"""
+        if self._engine is None:
+            self._engine = create_async_engine(
+                self._config.database.url, echo=self._config.database.echo,
+                pool_size=self._config.database.pool_size,
+            )
+            self._session_factory = async_sessionmaker(self._engine, expire_on_commit=False)
+
+    @property
+    def session_factory(self):
+        self._ensure_engine()
+        return self._session_factory
 
     async def init_db(self) -> None:
         """创建数据库表并种子默认 Prompt 模板。"""
+        self._ensure_engine()
         async with self._engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
 
@@ -71,6 +83,7 @@ class ReviewOrchestrator:
         3. 创建评审任务
         4. 分发到 Celery 异步执行
         """
+        self._ensure_engine()
         # 幂等去重：基于 event_id
         if event_dedup_cache.exists(event.event_id):
             logger.info("Duplicate event ignored: %s", event.event_id)
@@ -129,6 +142,7 @@ class ReviewOrchestrator:
 
     async def execute_review(self, task_id: str) -> None:
         """执行完整的评审流程。"""
+        self._ensure_engine()
         async with self._session_factory() as session:
             task = await session.get(ReviewTask, UUID(task_id))
             if not task:

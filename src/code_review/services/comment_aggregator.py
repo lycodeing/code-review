@@ -35,13 +35,38 @@ class AggregatedComment:
 
     @property
     def body(self) -> str:
-        parts = [f"**{m}**" for m in self.messages]
+        """格式化单条聚合评论，消息列表 + 代码建议块。"""
+        parts = []
+        for m in self.messages:
+            parts.append(f"- {m}")
         if self.suggestions:
-            parts.append("---")
-            parts.append("**建议修复:**")
+            parts.append("")
+            parts.append("**💡 建议修复：**")
+            parts.append("")
             for s in self.suggestions:
-                parts.append(f"- {s}")
+                # 如果建议包含行内代码（多词反号包裹），尝试提取为代码块
+                formatted = self._format_suggestion(s)
+                parts.append(formatted)
         return "\n".join(parts)
+
+    @staticmethod
+    def _format_suggestion(text: str) -> str:
+        """将建议文本中的行内代码片段转为独立代码块。"""
+        import re
+        # 匹配包含 . 或 ( 或 { 或 ; 的行内代码 — 很可能是真实代码片段
+        code_pattern = re.compile(r"`([^`]+[.;{}()\[\]][^`]*)`")
+        match = code_pattern.search(text)
+        if match:
+            code_snippet = match.group(1)
+            prose = text.replace(f"`{code_snippet}`", "").strip().rstrip("，。、：").strip()
+            lines = []
+            if prose:
+                lines.append(f"{prose}：")
+            lines.append("```java")
+            lines.append(code_snippet)
+            lines.append("```")
+            return "\n".join(lines)
+        return f"- {text}"
 
 
 class CommentAggregator:
@@ -168,18 +193,20 @@ class CommentAggregator:
     ) -> str:
         """构建评审摘要文本。"""
         lines = [
-            f"**共 {len(comments)} 条评审意见：**",
-            f"- 🔴 严重（Critical）: {severity_counts.get('critical', 0)}",
-            f"- 🟡 警告（Warning）: {severity_counts.get('warning', 0)}",
-            f"- 🔵 建议（Suggestion）: {severity_counts.get('suggestion', 0)}",
-            f"- ℹ️ 信息（Info）: {severity_counts.get('info', 0)}",
+            f"**共 {len(comments)} 条评审意见：**\n",
+            f"| 级别 | 数量 |",
+            f"|------|------|",
+            f"| 🔴 严重（Critical） | {severity_counts.get('critical', 0)} |",
+            f"| 🟡 警告（Warning） | {severity_counts.get('warning', 0)} |",
+            f"| 🔵 建议（Suggestion） | {severity_counts.get('suggestion', 0)} |",
+            f"| ℹ️ 信息（Info） | {severity_counts.get('info', 0)} |",
         ]
 
         # 列出所有严重问题
         criticals = [c for c in comments if c.severity == Severity.CRITICAL]
         if criticals:
-            lines.append("\n**🔴 严重问题：**")
-            for c in criticals[:10]:  # 最多列出 10 条
+            lines.append("\n**🔴 严重问题：**\n")
+            for c in criticals[:10]:
                 lines.append(f"- `{c.file_path}:{c.line_start}` — {c.message}")
 
         return "\n".join(lines)

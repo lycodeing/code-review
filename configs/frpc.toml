@@ -1,0 +1,16 @@
+# frpc 配置 — 本机连接公网 frps
+
+serverAddr = "lycodeing.cn"
+serverPort = 7000
+
+# 认证 token（必须与服务器 frps.toml 中的一致）
+# 部署后替换为实际 token
+auth.token = "lycodeing9527"
+
+# HTTP 隧道：把 lycodeing.cn 的请求转发到本地 8000
+[[proxies]]
+name = "code-review-web"
+type = "http"
+localIP = "127.0.0.1"
+localPort = 8000
+customDomains = ["cr.lycodeing.cn"]

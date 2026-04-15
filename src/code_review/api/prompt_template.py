@@ -33,7 +33,7 @@ class TemplateUpdate(BaseModel):
 
 
 class TemplateResponse(BaseModel):
-    id: str
+    id: UUID
     name: str
     content: str
     category: str
@@ -41,6 +41,8 @@ class TemplateResponse(BaseModel):
     enabled: int
     created_at: datetime
     updated_at: datetime
+
+    model_config = {"from_attributes": True}
 
     model_config = {"from_attributes": True}
 

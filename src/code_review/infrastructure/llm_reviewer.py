@@ -22,11 +22,6 @@ class LiteLLMReviewer(LLMReviewer):
 
     def __init__(self, config: LLMConfig):
         self._config = config
-        # 配置 LiteLLM
-        if config.api_key:
-            litellm.api_key = config.api_key
-        if config.api_base:
-            litellm.api_base = config.api_base
 
     async def review(
         self,
@@ -47,9 +42,9 @@ class LiteLLMReviewer(LLMReviewer):
         full_prompt = full_prompt.replace("{{files_context}}", files_context)
 
         try:
-            response = await litellm.acompletion(
-                model=self._config.model,
-                messages=[
+            kwargs = {
+                "model": self._config.model,
+                "messages": [
                     {
                         "role": "system",
                         "content": (
@@ -60,10 +55,16 @@ class LiteLLMReviewer(LLMReviewer):
                     },
                     {"role": "user", "content": full_prompt},
                 ],
-                temperature=self._config.temperature,
-                max_tokens=self._config.max_tokens,
-                timeout=self._config.timeout,
-            )
+                "temperature": self._config.temperature,
+                "max_tokens": self._config.max_tokens,
+                "timeout": self._config.timeout,
+            }
+            if self._config.api_key:
+                kwargs["api_key"] = self._config.api_key
+            if self._config.api_base:
+                kwargs["api_base"] = self._config.api_base
+
+            response = await litellm.acompletion(**kwargs)
 
             content = response.choices[0].message.content or ""
             total_tokens = response.usage.total_tokens if response.usage else 0
@@ -148,12 +149,17 @@ class LiteLLMReviewer(LLMReviewer):
 
     async def health_check(self) -> bool:
         try:
-            response = await litellm.acompletion(
-                model=self._config.model,
-                messages=[{"role": "user", "content": "ping"}],
-                max_tokens=5,
-                timeout=10,
-            )
+            kwargs = {
+                "model": self._config.model,
+                "messages": [{"role": "user", "content": "ping"}],
+                "max_tokens": 5,
+                "timeout": 10,
+            }
+            if self._config.api_key:
+                kwargs["api_key"] = self._config.api_key
+            if self._config.api_base:
+                kwargs["api_base"] = self._config.api_base
+            response = await litellm.acompletion(**kwargs)
             return bool(response.choices)
         except Exception as e:
             logger.error("LLM health check failed: %s", e)

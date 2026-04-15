@@ -85,13 +85,19 @@ class GiteeAdapter(BasePlatformAdapter):
         changes = []
         for f in data:
             status_map = {"added": "added", "modified": "modified", "removed": "removed"}
+            # Gitee API 返回 patch 可能是 dict（包含 diff 键）或 str
+            raw_patch = f.get("patch", "")
+            if isinstance(raw_patch, dict):
+                patch_text = raw_patch.get("diff", "")
+            else:
+                patch_text = raw_patch if isinstance(raw_patch, str) else ""
             changes.append(FileChange(
                 path=f["filename"],
                 added=f.get("additions", 0),
                 deleted=f.get("deletions", 0),
                 status=status_map.get(f.get("status", "modified"), "modified"),
-                diff=f.get("patch", ""),
-                patch=f.get("patch", ""),
+                diff=patch_text,
+                patch=patch_text,
             ))
         return changes
 
@@ -131,37 +137,72 @@ class GiteeAdapter(BasePlatformAdapter):
         self, project_id: str, mr_iid: str, comment: PublishComment
     ) -> str:
         owner, repo = self._parse_project_id(project_id)
-        body = self._format_comment_body(comment)
-
-        if comment.position:
-            payload = {
-                "body": body,
-                "path": comment.position.path,
-                "line": comment.position.line,
-                "side": comment.position.side,
-            }
-            data = await self._request(
-                "POST",
-                f"/repos/{owner}/{repo}/pulls/{mr_iid}/comments",
-                params=self._with_token(),
-                json=payload,
-            )
-        else:
-            data = await self._request(
-                "POST",
-                f"/repos/{owner}/{repo}/pulls/{mr_iid}/comments",
-                params=self._with_token(),
-                json={"body": body},
-            )
+        data = await self._request(
+            "POST",
+            f"/repos/{owner}/{repo}/pulls/{mr_iid}/comments",
+            params=self._with_token(),
+            json={"body": comment.body},
+        )
         return str(data.get("id", ""))
 
-    @staticmethod
-    def _format_comment_body(comment: PublishComment) -> str:
-        severity_emoji = {
-            "critical": "🔴", "warning": "🟡", "suggestion": "🔵", "info": "ℹ️",
-        }
-        emoji = severity_emoji.get(comment.severity, "")
-        return f"{emoji} **[{comment.severity.upper()}]** {comment.body}"
+    async def publish_comments_batch(
+        self,
+        project_id: str,
+        mr_iid: str,
+        comments: list,
+    ) -> list[str]:
+        """将所有评审意见按严重级别分组，格式化为 Markdown PR 评论。"""
+        owner, repo = self._parse_project_id(project_id)
+
+        SEVERITY_CONFIG = [
+            ("critical", "🔴 Critical", "必须修复"),
+            ("warning", "🟡 Warning", "建议修复"),
+            ("suggestion", "🔵 Suggestion", "优化建议"),
+            ("info", "ℹ️ Info", "信息提示"),
+        ]
+
+        # 按严重级别分组
+        groups: dict[str, list] = {}
+        for c in comments:
+            groups.setdefault(c.severity, []).append(c)
+
+        # ---- 标题 + 统计摘要 ----
+        parts = ["## 🔍 AI Code Review\n"]
+        stats = []
+        total = len(comments)
+        for sev, label, _ in SEVERITY_CONFIG:
+            n = len(groups.get(sev, []))
+            if n:
+                stats.append(f"{label} {n}")
+        if stats:
+            parts.append(f"> 📊 **共 {total} 条意见** — {' | '.join(stats)}\n")
+        parts.append("---")
+
+        # ---- 按类型分组输出 ----
+        for sev, label, desc in SEVERITY_CONFIG:
+            group = groups.get(sev)
+            if not group:
+                continue
+            parts.append(f"\n### {label}（{desc}）\n")
+            for idx, c in enumerate(group, 1):
+                # 文件 + 行号定位
+                if c.position:
+                    parts.append(
+                        f"\n**{idx}. 📄 `{c.position.path}` L{c.position.line}**\n"
+                    )
+                # 评论内容（含建议修复）
+                parts.append(f"{c.body}\n")
+            parts.append("\n---")
+
+        body = "\n".join(parts)
+
+        data = await self._request(
+            "POST",
+            f"/repos/{owner}/{repo}/pulls/{mr_iid}/comments",
+            params=self._with_token(),
+            json={"body": body},
+        )
+        return [str(data.get("id", ""))]
 
     # ---- Webhook 处理 ----
     _webhook_secret: str = ""
@@ -169,16 +210,43 @@ class GiteeAdapter(BasePlatformAdapter):
     def set_webhook_secret(self, secret: str) -> None:
         self._webhook_secret = secret
 
-    async def verify_webhook_signature(self, payload: bytes, signature: str) -> bool:
-        """Gitee 使用 X-Gitee-Token 或 HMAC-SHA256 签名。"""
+    async def verify_webhook_signature(
+        self, payload: bytes, signature: str, timestamp: str = ""
+    ) -> bool:
+        """Gitee Webhook 签名验证。
+
+        Gitee 签名算法（官方文档）：
+        1. sign_str = timestamp + "\\n" + webhook_secret
+        2. token = Base64(HMAC-SHA256(sign_str, webhook_secret))
+
+        同时兼容直接 token 比对模式（明文密码方式）。
+        """
         if not self._webhook_secret:
             logger.warning("Gitee webhook_secret not configured, skipping verification")
             return True
-        # 优先尝试 HMAC-SHA256
-        expected = hashlib.sha256(
-            self._webhook_secret.encode() + payload
-        ).hexdigest()
-        return hmac.compare_digest(expected, signature)
+
+        if not signature:
+            return False
+
+        # 方式1：HMAC-SHA256 签名验证（Gitee 密钥签名方式）
+        if timestamp:
+            import base64
+            sign_str = timestamp + "\n" + self._webhook_secret
+            expected = base64.b64encode(
+                hmac.new(
+                    self._webhook_secret.encode("utf-8"),
+                    sign_str.encode("utf-8"),
+                    hashlib.sha256,
+                ).digest()
+            ).decode("utf-8")
+            if hmac.compare_digest(expected, signature):
+                return True
+
+        # 方式2：直接 token 比对（明文密码方式）
+        if hmac.compare_digest(self._webhook_secret, signature):
+            return True
+
+        return False
 
     async def parse_webhook_event(self, payload: dict) -> WebhookEvent | None:
         action = payload.get("action")

@@ -5,7 +5,7 @@ from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from sqlalchemy import select, func, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -34,7 +34,7 @@ class ProjectUpdate(BaseModel):
 
 
 class ProjectResponse(BaseModel):
-    id: str
+    id: UUID
     name: str
     platform: str
     platform_project_id: str
@@ -42,12 +42,12 @@ class ProjectResponse(BaseModel):
     config: dict | None
     created_at: datetime
 
-    model_config = {"from_attributes": True}
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ReviewTaskResponse(BaseModel):
-    id: str
-    project_id: str
+    id: UUID
+    project_id: UUID
     mr_iid: str
     mr_title: str | None
     mr_author: str | None
@@ -64,12 +64,12 @@ class ReviewTaskResponse(BaseModel):
     completed_at: datetime | None
     created_at: datetime
 
-    model_config = {"from_attributes": True}
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ReviewCommentResponse(BaseModel):
-    id: str
-    task_id: str
+    id: UUID
+    task_id: UUID
     file_path: str
     line_start: int
     line_end: int | None
