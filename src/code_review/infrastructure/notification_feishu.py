@@ -9,7 +9,6 @@ import logging
 import httpx
 
 from code_review.core.notification import NotificationChannel, NotificationPayload
-from code_review.models.config import FeishuConfig
 
 logger = logging.getLogger(__name__)
 
@@ -17,10 +16,16 @@ logger = logging.getLogger(__name__)
 class FeishuChannel(NotificationChannel):
     """飞书自定义机器人 Webhook 通知。"""
 
-    def __init__(self, config: FeishuConfig):
-        self._config = config
-        self._webhook_url = config.webhook_url
-        self._secret = config.secret
+    def __init__(self, config):
+        """初始化飞书通知渠道。
+
+        Args:
+            config: NotificationConfig ORM 对象或兼容的 dict/namespace。
+                    需要包含 enabled, webhook_url, secret 属性。
+        """
+        self._enabled = getattr(config, "enabled", False)
+        self._webhook_url = getattr(config, "webhook_url", "")
+        self._secret = getattr(config, "secret", "")
 
     @property
     def name(self) -> str:
@@ -28,7 +33,7 @@ class FeishuChannel(NotificationChannel):
 
     @property
     def enabled(self) -> bool:
-        return self._config.enabled and bool(self._webhook_url)
+        return self._enabled and bool(self._webhook_url)
 
     async def send(self, payload: NotificationPayload) -> bool:
         if not self.enabled:

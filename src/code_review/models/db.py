@@ -4,6 +4,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import (
+    Boolean,
     Column,
     String,
     Text,
@@ -130,3 +131,82 @@ class ReviewComment(Base):
 
     def __repr__(self) -> str:
         return f"<ReviewComment {self.file_path}:{self.line_start} [{self.severity}]>"
+
+
+class PlatformConfig(Base):
+    """代码平台配置表。"""
+    __tablename__ = "platform_configs"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    platform = Column(String(32), nullable=False, unique=True, comment="平台标识: github/gitlab/gitee")
+    access_token = Column(Text, nullable=False, default="", comment="API 访问令牌（加密）")
+    webhook_secret = Column(Text, nullable=False, default="", comment="Webhook 签名密钥（加密）")
+    api_url = Column(String(512), nullable=False, default="", comment="API 基础地址")
+    enabled = Column(Boolean, nullable=False, default=True, comment="是否启用")
+    description = Column(String(512), nullable=False, default="", comment="说明文字")
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    notification_bindings = relationship(
+        "PlatformNotificationBinding",
+        back_populates="platform",
+        cascade="all, delete-orphan",
+    )
+
+    def __repr__(self) -> str:
+        return f"<PlatformConfig {self.platform}>"
+
+
+class NotificationConfig(Base):
+    """通知渠道配置表。"""
+    __tablename__ = "notification_configs"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    channel = Column(String(32), nullable=False, unique=True, comment="渠道标识: dingtalk/feishu")
+    enabled = Column(Boolean, nullable=False, default=False, comment="是否启用")
+    webhook_url = Column(String(1024), nullable=False, default="", comment="Webhook 地址")
+    secret = Column(Text, nullable=False, default="", comment="签名密钥（加密）")
+    at_mobiles = Column(String(1024), nullable=False, default="", comment="@人手机号（逗号分隔）")
+    description = Column(String(512), nullable=False, default="", comment="说明文字")
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    platform_bindings = relationship(
+        "PlatformNotificationBinding",
+        back_populates="notification",
+        cascade="all, delete-orphan",
+    )
+
+    def __repr__(self) -> str:
+        return f"<NotificationConfig {self.channel}>"
+
+
+class PlatformNotificationBinding(Base):
+    """平台-通知渠道关联表（多对多）。"""
+    __tablename__ = "platform_notification_bindings"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    platform_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("platform_configs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    notification_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("notification_configs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    enabled = Column(Boolean, nullable=False, default=True, comment="绑定是否启用")
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    platform = relationship("PlatformConfig", back_populates="notification_bindings")
+    notification = relationship("NotificationConfig", back_populates="platform_bindings")
+
+    __table_args__ = (
+        UniqueConstraint("platform_id", "notification_id", name="uq_platform_notification"),
+        Index("idx_bindings_platform", "platform_id"),
+        Index("idx_bindings_notification", "notification_id"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<PlatformNotificationBinding {self.platform_id}->{self.notification_id}>"

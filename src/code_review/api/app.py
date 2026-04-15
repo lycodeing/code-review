@@ -10,6 +10,8 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from code_review.api.webhook import router as webhook_router
 from code_review.api.management import router as management_router
 from code_review.api.prompt_template import router as prompt_template_router
+from code_review.api.platform_config import router as platform_config_router
+from code_review.api.notification_config import router as notification_config_router
 from code_review.infrastructure.celery_app import init_celery
 from code_review.infrastructure.notification_manager import NotificationManager
 from code_review.models.config import AppConfig
@@ -67,12 +69,25 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         async with session_factory() as seed_session:
             await seed_default_templates(seed_session)
 
+        # 种子默认平台和通知配置
+        async with session_factory() as seed_session:
+            await _seed_config_tables(seed_session)
+
         # 初始化 Celery
         init_celery(config)
 
-        # 初始化编排器
-        orchestrator = ReviewOrchestrator(config)
+        # 初始化编排器（传入 session_factory 和 secret_key 以支持 DB 配置）
+        orchestrator = ReviewOrchestrator(
+            config,
+            session_factory=session_factory,
+            secret_key=config.server.secret_key,
+        )
         notification_manager = NotificationManager(config)
+
+        # 从 DB 初始化通知渠道
+        await notification_manager.init_channels_from_db(
+            session_factory, config.server.secret_key,
+        )
 
         # 注入到 app.state
         app.state.config = config
@@ -100,8 +115,66 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     app.include_router(webhook_router)
     app.include_router(management_router)
     app.include_router(prompt_template_router)
+    app.include_router(platform_config_router)
+    app.include_router(notification_config_router)
 
     return app
+
+
+async def _seed_config_tables(session) -> None:
+    """种子默认平台配置、通知配置和绑定关系。"""
+    from sqlalchemy import select
+    from code_review.models.db import (
+        PlatformConfig,
+        NotificationConfig,
+        PlatformNotificationBinding,
+    )
+
+    # 种子平台配置
+    default_platforms = [
+        {"platform": "gitee", "api_url": "https://gitee.com/api/v5", "description": "Gitee 代码平台"},
+        {"platform": "github", "api_url": "https://api.github.com", "description": "GitHub 代码平台"},
+        {"platform": "gitlab", "api_url": "https://gitlab.com/api/v4", "description": "GitLab 代码平台"},
+    ]
+    for p in default_platforms:
+        existing = await session.execute(
+            select(PlatformConfig).where(PlatformConfig.platform == p["platform"])
+        )
+        if existing.scalar_one_or_none() is None:
+            session.add(PlatformConfig(enabled=True, **p))
+
+    # 种子通知配置
+    default_notifications = [
+        {"channel": "dingtalk", "description": "钉钉机器人通知"},
+        {"channel": "feishu", "description": "飞书机器人通知"},
+    ]
+    for n in default_notifications:
+        existing = await session.execute(
+            select(NotificationConfig).where(NotificationConfig.channel == n["channel"])
+        )
+        if existing.scalar_one_or_none() is None:
+            session.add(NotificationConfig(enabled=False, **n))
+
+    await session.commit()
+
+    # 种子绑定关系
+    platforms = (await session.execute(select(PlatformConfig))).scalars().all()
+    notifications = (await session.execute(select(NotificationConfig))).scalars().all()
+    for pc in platforms:
+        for nc in notifications:
+            existing = await session.execute(
+                select(PlatformNotificationBinding).where(
+                    PlatformNotificationBinding.platform_id == pc.id,
+                    PlatformNotificationBinding.notification_id == nc.id,
+                )
+            )
+            if existing.scalar_one_or_none() is None:
+                session.add(PlatformNotificationBinding(
+                    platform_id=pc.id,
+                    notification_id=nc.id,
+                    enabled=True,
+                ))
+    await session.commit()
 
 
 # WSGI/ASGI 入口

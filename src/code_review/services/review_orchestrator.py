@@ -38,8 +38,14 @@ logger = logging.getLogger(__name__)
 class ReviewOrchestrator:
     """评审编排器。"""
 
-    def __init__(self, config: AppConfig):
+    def __init__(
+        self,
+        config: AppConfig,
+        session_factory: async_sessionmaker | None = None,
+        secret_key: str = "",
+    ):
         self._config = config
+        self._secret_key = secret_key
         self._prompt_manager = PromptTemplateManager(language=config.review.comment_language)
         self._notification_manager = NotificationManager(config)
         self._aggregator = CommentAggregator(
@@ -49,10 +55,12 @@ class ReviewOrchestrator:
         )
         # 数据库引擎（延迟初始化，避免跨事件循环问题）
         self._engine = None
-        self._session_factory = None
+        self._session_factory = session_factory
 
     def _ensure_engine(self):
         """确保引擎在当前事件循环中创建。"""
+        if self._session_factory is not None:
+            return  # 外部注入了 session_factory，无需自建引擎
         if self._engine is None:
             self._engine = create_async_engine(
                 self._config.database.url, echo=self._config.database.echo,
@@ -74,6 +82,36 @@ class ReviewOrchestrator:
         # 种子默认模板
         async with self._session_factory() as session:
             await seed_default_templates(session)
+
+    async def _get_platform_config(self, platform: str):
+        """获取平台配置（DB 优先，env 降级）。"""
+        from code_review.services.platform_config_service import PlatformConfigService
+
+        # 获取 env 降级值
+        env_fallbacks = {
+            "github": (self._config.github.token, self._config.github.api_url, self._config.github.webhook_secret),
+            "gitlab": (self._config.gitlab.token, self._config.gitlab.api_url, self._config.gitlab.webhook_secret),
+            "gitee": (self._config.gitee.token, self._config.gitee.api_url, self._config.gitee.webhook_secret),
+        }
+        env_token, env_api_url, env_secret = env_fallbacks.get(platform, ("", "", ""))
+
+        async with self.session_factory() as session:
+            svc = PlatformConfigService(session, self._secret_key)
+            return await svc.get_by_platform_with_fallback(
+                platform,
+                env_token=env_token,
+                env_api_url=env_api_url,
+                env_webhook_secret=env_secret,
+            )
+
+    async def _init_notification_channels(self, platform: str = "") -> None:
+        """初始化通知渠道（DB 优先，env 降级）。"""
+        if self._session_factory and self._secret_key:
+            await self._notification_manager.init_channels_from_db(
+                self._session_factory, self._secret_key, platform=platform,
+            )
+        else:
+            self._notification_manager.init_channels_sync()
 
     async def process_webhook_event(self, event: WebhookEvent) -> ReviewTask | None:
         """处理 Webhook 事件入口。
@@ -160,10 +198,15 @@ class ReviewOrchestrator:
                 if not project:
                     raise ValueError(f"Project not found: {task.project_id}")
 
+                # 从 DB 获取平台配置（env 降级）
+                platform_config = await self._get_platform_config(project.platform)
+                if not platform_config:
+                    raise ValueError(f"No platform config for: {project.platform}")
+
                 # 创建平台适配器
                 adapter = create_adapter(
                     platform=project.platform,
-                    config=self._config,
+                    platform_config=platform_config,
                     project_webhook_secret=project.webhook_secret or "",
                 )
 
@@ -261,7 +304,8 @@ class ReviewOrchestrator:
                     )
                     session.add(db_comment)
 
-                # 发送通知
+                # 发送通知（使用平台绑定的通知渠道）
+                await self._init_notification_channels(platform=project.platform)
                 notification_payload = NotificationPayload(
                     mr_title=mr_info.title,
                     mr_author=mr_info.author,
@@ -359,4 +403,5 @@ class ReviewOrchestrator:
 
     async def close(self) -> None:
         """清理资源。"""
-        await self._engine.dispose()
+        if self._engine:
+            await self._engine.dispose()

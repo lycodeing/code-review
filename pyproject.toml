@@ -39,6 +39,9 @@ dependencies = [
     # 日志
     "structlog>=24.4.0",
 
+    # 加密
+    "cryptography>=43.0.0",
+
     # 邮件
     "aiosmtplib>=3.0.2",
 ]
