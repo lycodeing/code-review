@@ -1,0 +1,348 @@
+"""评审编排器 - 核心业务逻辑。
+
+协调整个评审流程：接收事件 → 去重 → 获取变更 → 调用 LLM → 聚合评论 → 发布 → 通知。
+"""
+
+import asyncio
+import logging
+from datetime import datetime
+from fnmatch import fnmatch
+from uuid import UUID
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
+
+from code_review.adapters.factory import create_adapter
+from code_review.core.llm import ReviewResult
+from code_review.core.notification import NotificationPayload
+from code_review.core.platform import (
+    PlatformType,
+    WebhookEvent,
+    PublishComment,
+    CommentPosition,
+    FileChange,
+)
+from code_review.infrastructure.cache import event_dedup_cache
+from code_review.infrastructure.celery_app import async_task, get_celery
+from code_review.infrastructure.llm_reviewer import LiteLLMReviewer
+from code_review.infrastructure.notification_manager import NotificationManager
+from code_review.infrastructure.prompt_manager import PromptTemplateManager
+from code_review.models.config import AppConfig
+from code_review.models.db import Base, Project, ReviewTask, ReviewComment as ReviewCommentDB
+from code_review.services.comment_aggregator import CommentAggregator
+from code_review.services.prompt_template_service import seed_default_templates
+
+logger = logging.getLogger(__name__)
+
+
+class ReviewOrchestrator:
+    """评审编排器。"""
+
+    def __init__(self, config: AppConfig):
+        self._config = config
+        self._prompt_manager = PromptTemplateManager(language=config.review.comment_language)
+        self._notification_manager = NotificationManager(config)
+        self._aggregator = CommentAggregator(
+            max_comments=config.review.max_comments_per_mr,
+            summary_threshold=config.review.severity_threshold_for_summary,
+            comment_mode=config.review.comment_mode,
+        )
+        # 数据库引擎（延迟初始化）
+        self._engine = create_async_engine(
+            config.database.url, echo=config.database.echo,
+            pool_size=config.database.pool_size,
+        )
+        self._session_factory = async_sessionmaker(self._engine, expire_on_commit=False)
+
+    async def init_db(self) -> None:
+        """创建数据库表并种子默认 Prompt 模板。"""
+        async with self._engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+
+        # 种子默认模板
+        async with self._session_factory() as session:
+            await seed_default_templates(session)
+
+    async def process_webhook_event(self, event: WebhookEvent) -> ReviewTask | None:
+        """处理 Webhook 事件入口。
+
+        1. 去重检查
+        2. 查找项目配置
+        3. 创建评审任务
+        4. 分发到 Celery 异步执行
+        """
+        # 幂等去重：基于 event_id
+        if event_dedup_cache.exists(event.event_id):
+            logger.info("Duplicate event ignored: %s", event.event_id)
+            return None
+
+        event_dedup_cache.set(event.event_id, True, ttl=3600)
+
+        async with self._session_factory() as session:
+            # 查找匹配的项目
+            project = await self._find_project(session, event)
+            if not project:
+                logger.warning(
+                    "No project found for %s/%s",
+                    event.platform.value,
+                    event.project_id,
+                )
+                return None
+
+            # 检查是否为可触发评审的动作
+            if event.action not in ("opened", "synchronize", "updated", "reopened"):
+                logger.info("Action '%s' does not trigger review", event.action)
+                return None
+
+            # 创建评审任务记录
+            task = ReviewTask(
+                project_id=project.id,
+                mr_iid=event.mr_iid,
+                event_id=event.event_id,
+                trigger_action=event.action,
+                status=ReviewTask.Status.PENDING,
+            )
+            session.add(task)
+            await session.commit()
+            await session.refresh(task)
+
+        # 分发 Celery 任务
+        try:
+            celery = get_celery()
+            celery_result = celery.send_task(
+                "code_review.execute_review",
+                args=[str(task.id)],
+                queue="review",
+            )
+            # 更新 celery_task_id
+            async with self._session_factory() as session:
+                db_task = await session.get(ReviewTask, task.id)
+                if db_task:
+                    db_task.celery_task_id = celery_result.id
+                    await session.commit()
+        except Exception as e:
+            logger.error("Failed to dispatch Celery task: %s", e)
+            # 降级为同步执行
+            await self.execute_review(str(task.id))
+
+        return task
+
+    async def execute_review(self, task_id: str) -> None:
+        """执行完整的评审流程。"""
+        async with self._session_factory() as session:
+            task = await session.get(ReviewTask, UUID(task_id))
+            if not task:
+                logger.error("Review task not found: %s", task_id)
+                return
+
+            try:
+                # 更新状态为评审中
+                task.status = ReviewTask.Status.IN_PROGRESS
+                task.started_at = datetime.utcnow()
+                await session.commit()
+
+                # 获取项目配置
+                project = await session.get(Project, task.project_id)
+                if not project:
+                    raise ValueError(f"Project not found: {task.project_id}")
+
+                # 创建平台适配器
+                adapter = create_adapter(
+                    platform=project.platform,
+                    config=self._config,
+                    project_webhook_secret=project.webhook_secret or "",
+                )
+
+                # 获取 MR 信息
+                mr_info = await adapter.get_mr_info(
+                    project.platform_project_id, task.mr_iid
+                )
+                task.mr_title = mr_info.title
+                task.mr_author = mr_info.author
+                task.mr_url = mr_info.web_url or mr_info.url
+                task.source_branch = mr_info.source_branch
+                task.target_branch = mr_info.target_branch
+
+                # 获取变更文件列表
+                changes = await adapter.get_mr_changes(
+                    project.platform_project_id, task.mr_iid
+                )
+
+                # 文件过滤
+                filtered_changes = self._filter_files(
+                    changes, project.config or {}
+                )
+
+                if not filtered_changes:
+                    task.status = ReviewTask.Status.COMPLETED
+                    task.summary = "No reviewable files found after filtering."
+                    task.completed_at = datetime.utcnow()
+                    await session.commit()
+                    return
+
+                # 合并 diff
+                combined_diff = self._combine_diffs(filtered_changes)
+
+                # 选择 prompt 模板（从数据库动态加载，支持热更新）
+                languages = {
+                    self._prompt_manager.detect_language(c.path)
+                    for c in filtered_changes
+                }
+                # 使用最主要的语言模板（或 default）
+                main_language = max(languages, key=lambda l: sum(
+                    1 for c in filtered_changes
+                    if self._prompt_manager.detect_language(c.path) == l
+                )) if languages else "default"
+
+                # 优先使用项目配置中指定的模板名称，否则按分类自动匹配
+                project_template_name = (
+                    (project.config or {}).get("prompt_template_name")
+                )
+                prompt = await self._prompt_manager.get_template(
+                    session=session,
+                    language=main_language,
+                    template_name=project_template_name,
+                )
+
+                # 调用 LLM 评审
+                reviewer = LiteLLMReviewer(self._config.llm)
+                result: ReviewResult = await reviewer.review(
+                    diff=combined_diff,
+                    files=filtered_changes,
+                    prompt_template=prompt,
+                )
+
+                task.model_name = result.model
+
+                # 聚合评论
+                aggregated, summary = self._aggregator.aggregate(result.comments)
+                task.summary = summary or result.summary
+                task.total_comments = len(result.comments)
+                task.critical_count = sum(
+                    1 for c in result.comments if c.severity.value == "critical"
+                )
+                task.warning_count = sum(
+                    1 for c in result.comments if c.severity.value == "warning"
+                )
+
+                # 发布评论到平台
+                publish_comments = self._to_publish_comments(aggregated)
+                if publish_comments:
+                    await adapter.publish_comments_batch(
+                        project.platform_project_id,
+                        task.mr_iid,
+                        publish_comments,
+                    )
+
+                # 保存评审意见到数据库
+                for comment in result.comments:
+                    db_comment = ReviewCommentDB(
+                        task_id=task.id,
+                        file_path=comment.file_path,
+                        line_start=comment.line_start,
+                        line_end=comment.line_end,
+                        severity=comment.severity.value,
+                        message=comment.message,
+                        suggestion=comment.suggestion,
+                    )
+                    session.add(db_comment)
+
+                # 发送通知
+                notification_payload = NotificationPayload(
+                    mr_title=mr_info.title,
+                    mr_author=mr_info.author,
+                    mr_url=mr_info.web_url or mr_info.url,
+                    project_name=project.name,
+                    summary=task.summary or "",
+                    critical_count=task.critical_count or 0,
+                    warning_count=task.warning_count or 0,
+                    suggestion_count=sum(
+                        1 for c in result.comments
+                        if c.severity.value == "suggestion"
+                    ),
+                    info_count=sum(
+                        1 for c in result.comments
+                        if c.severity.value == "info"
+                    ),
+                    detail_link=mr_info.web_url or mr_info.url,
+                )
+                await self._notification_manager.notify_all(notification_payload)
+
+                task.status = ReviewTask.Status.COMPLETED
+                task.completed_at = datetime.utcnow()
+                await session.commit()
+
+                logger.info(
+                    "Review completed: task=%s, comments=%d",
+                    task_id, len(result.comments),
+                )
+
+            except Exception as e:
+                logger.error("Review failed for task %s: %s", task_id, e, exc_info=True)
+                task.status = ReviewTask.Status.FAILED
+                task.error_message = str(e)
+                task.completed_at = datetime.utcnow()
+                await session.commit()
+
+    async def _find_project(
+        self, session: AsyncSession, event: WebhookEvent
+    ) -> Project | None:
+        """根据事件查找匹配的项目配置。"""
+        stmt = select(Project).where(
+            Project.platform == event.platform.value,
+            Project.platform_project_id == event.project_id,
+            Project.enabled == 1,
+        )
+        result = await session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    def _filter_files(
+        self, changes: list[FileChange], project_config: dict
+    ) -> list[FileChange]:
+        """根据排除规则过滤文件。"""
+        # 项目级配置覆盖全局配置
+        exclude_patterns = project_config.get(
+            "exclude_patterns", self._config.review.exclude_patterns
+        )
+
+        filtered = []
+        for change in changes:
+            excluded = any(
+                fnmatch(change.path, pattern) for pattern in exclude_patterns
+            )
+            if not excluded:
+                filtered.append(change)
+        return filtered
+
+    @staticmethod
+    def _combine_diffs(changes: list[FileChange]) -> str:
+        """合并多个文件的 diff 为单个文本。"""
+        parts = []
+        for change in changes:
+            if change.diff:
+                header = f"diff --git a/{change.path} b/{change.path}"
+                parts.append(header)
+                parts.append(change.diff)
+        return "\n".join(parts)
+
+    @staticmethod
+    def _to_publish_comments(
+        aggregated: list,
+    ) -> list[PublishComment]:
+        """将聚合后的评论转换为平台发布格式。"""
+        comments = []
+        for agg in aggregated:
+            position = CommentPosition(
+                path=agg.file_path,
+                line=agg.line_start,
+            )
+            comments.append(PublishComment(
+                body=agg.body,
+                position=position,
+                severity=agg.severity.value if hasattr(agg.severity, "value") else str(agg.severity),
+            ))
+        return comments
+
+    async def close(self) -> None:
+        """清理资源。"""
+        await self._engine.dispose()

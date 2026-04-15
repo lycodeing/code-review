@@ -1,0 +1,98 @@
+services:
+  # ---- FastAPI 应用 ----
+  app:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: code-review-app
+    ports:
+      - "8000:8000"
+    env_file:
+      - ../configs/.env
+    environment:
+      - CODE_REVIEW__DATABASE__URL=postgresql+asyncpg://postgres:postgres@db:5432/code_review
+      - CODE_REVIEW__REDIS__URL=redis://redis:6379/0
+      - CODE_REVIEW__CELERY__BROKER_URL=redis://redis:6379/1
+      - CODE_REVIEW__CELERY__RESULT_BACKEND=redis://redis:6379/2
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ---- Celery Worker ----
+  worker:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: code-review-worker
+    command: ["celery", "-A", "code_review.worker", "worker", "-Q", "review", "-l", "info", "--concurrency=2"]
+    env_file:
+      - ../configs/.env
+    environment:
+      - CODE_REVIEW__DATABASE__URL=postgresql+asyncpg://postgres:postgres@db:5432/code_review
+      - CODE_REVIEW__REDIS__URL=redis://redis:6379/0
+      - CODE_REVIEW__CELERY__BROKER_URL=redis://redis:6379/1
+      - CODE_REVIEW__CELERY__RESULT_BACKEND=redis://redis:6379/2
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ---- Celery Beat (定时任务调度，可选) ----
+  # beat:
+  #   build:
+  #     context: ..
+  #     dockerfile: Dockerfile
+  #   command: ["celery", "-A", "code_review.worker", "beat", "-l", "info"]
+  #   env_file:
+  #     - ../configs/.env
+  #   environment:
+  #     - CODE_REVIEW__CELERY__BROKER_URL=redis://redis:6379/1
+  #   depends_on:
+  #     redis:
+  #       condition: service_healthy
+  #   restart: unless-stopped
+
+  # ---- PostgreSQL ----
+  db:
+    image: postgres:16-alpine
+    container_name: code-review-db
+    environment:
+      POSTGRES_DB: code_review
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ../configs/migrations/001_init.sql:/docker-entrypoint-initdb.d/001_init.sql
+      - ../configs/migrations/002_prompt_templates.sql:/docker-entrypoint-initdb.d/002_prompt_templates.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ---- Redis ----
+  redis:
+    image: redis:7-alpine
+    container_name: code-review-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:

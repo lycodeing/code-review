@@ -1,0 +1,132 @@
+"""数据库 ORM 模型（SQLAlchemy async）。"""
+
+import uuid
+from datetime import datetime
+
+from sqlalchemy import (
+    Column,
+    String,
+    Text,
+    Integer,
+    DateTime,
+    Enum as SAEnum,
+    ForeignKey,
+    UniqueConstraint,
+    Index,
+    JSON,
+)
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import DeclarativeBase, relationship
+
+
+class Base(DeclarativeBase):
+    """SQLAlchemy 声明式基类。"""
+    pass
+
+
+class Project(Base):
+    """项目配置表 —— 支持多项目。"""
+    __tablename__ = "projects"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name = Column(String(255), nullable=False, unique=True, comment="项目名称")
+    platform = Column(String(50), nullable=False, comment="平台类型: github/gitlab/gitee")
+    platform_project_id = Column(String(255), nullable=False, comment="平台上的项目 ID")
+    webhook_secret = Column(String(512), nullable=True, comment="Webhook 签名密钥")
+    config = Column(JSON, nullable=True, comment="项目级配置覆盖（文件过滤、评论模式等）")
+    enabled = Column(Integer, nullable=False, default=1, comment="是否启用")
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    reviews = relationship("ReviewTask", back_populates="project", cascade="all, delete-orphan")
+
+    def __repr__(self) -> str:
+        return f"<Project {self.name} ({self.platform})>"
+
+
+class ReviewTask(Base):
+    """评审任务表。"""
+    __tablename__ = "review_tasks"
+
+    class Status(str):
+        PENDING = "pending"
+        IN_PROGRESS = "in_progress"
+        COMPLETED = "completed"
+        FAILED = "failed"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False)
+    mr_iid = Column(String(64), nullable=False, comment="平台展示用的 MR 短 ID")
+    mr_title = Column(String(512), nullable=True)
+    mr_author = Column(String(255), nullable=True)
+    mr_url = Column(Text, nullable=True)
+    source_branch = Column(String(255), nullable=True)
+    target_branch = Column(String(255), nullable=True)
+    status = Column(String(32), nullable=False, default=Status.PENDING, index=True)
+    event_id = Column(String(255), nullable=True, comment="用于幂等去重的事件 ID")
+    trigger_action = Column(String(64), nullable=True, comment="触发动作: opened/synchronize/updated")
+    model_name = Column(String(128), nullable=True, comment="使用的 LLM 模型")
+    total_comments = Column(Integer, nullable=True, default=0)
+    critical_count = Column(Integer, nullable=True, default=0)
+    warning_count = Column(Integer, nullable=True, default=0)
+    summary = Column(Text, nullable=True)
+    error_message = Column(Text, nullable=True)
+    celery_task_id = Column(String(255), nullable=True)
+    started_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    project = relationship("Project", back_populates="reviews")
+    comments = relationship("ReviewComment", back_populates="task", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        UniqueConstraint("project_id", "mr_iid", "event_id", name="uq_review_event"),
+        Index("ix_review_status", "status"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<ReviewTask {self.id} [{self.status}]>"
+
+
+class PromptTemplate(Base):
+    """Prompt 模板表 —— 数据库管理模板。"""
+    __tablename__ = "prompt_templates"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name = Column(String(255), nullable=False, unique=True, comment="模板名称（唯一标识）")
+    content = Column(Text, nullable=False, comment="模板内容（支持 {{diff}} / {{files_context}} 占位符）")
+    category = Column(String(64), nullable=False, default="default", comment="模板分类：python/java/go/default 等")
+    locale = Column(String(10), nullable=False, default="zh", comment="语言标识：zh / en")
+    enabled = Column(Integer, nullable=False, default=1, comment="是否启用：1 启用 / 0 禁用")
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("name", name="uq_prompt_template_name"),
+        Index("ix_prompt_template_category", "category"),
+        Index("ix_prompt_template_locale", "locale"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<PromptTemplate {self.name} [{self.category}/{self.locale}]>"
+
+
+class ReviewComment(Base):
+    """评审意见表。"""
+    __tablename__ = "review_comments"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    task_id = Column(UUID(as_uuid=True), ForeignKey("review_tasks.id"), nullable=False)
+    file_path = Column(String(1024), nullable=False)
+    line_start = Column(Integer, nullable=False)
+    line_end = Column(Integer, nullable=True)
+    severity = Column(String(32), nullable=False, comment="critical/warning/suggestion/info")
+    message = Column(Text, nullable=False)
+    suggestion = Column(Text, nullable=True)
+    platform_comment_id = Column(String(255), nullable=True, comment="平台上已发布的评论 ID")
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    task = relationship("ReviewTask", back_populates="comments")
+
+    def __repr__(self) -> str:
+        return f"<ReviewComment {self.file_path}:{self.line_start} [{self.severity}]>"

@@ -1,0 +1,84 @@
+[project]
+name = "code-review"
+version = "1.0.0"
+description = "AI-powered code review service for GitHub, GitLab, and Gitee"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [
+    {name = "Code Review Team"}
+]
+
+dependencies = [
+    # Web 框架
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.34.0",
+    "pydantic>=2.10.0",
+    "pydantic-settings>=2.7.0",
+
+    # 数据库
+    "sqlalchemy[asyncio]>=2.0.36",
+    "asyncpg>=0.30.0",
+    "alembic>=1.14.0",
+
+    # HTTP 客户端
+    "httpx>=0.28.0",
+
+    # LLM
+    "litellm>=1.55.0",
+
+    # 任务队列
+    "celery[redis]>=5.4.0",
+
+    # 重试
+    "tenacity>=9.0.0",
+
+    # 模板引擎
+    "jinja2>=3.1.4",
+
+    # 日志
+    "structlog>=24.4.0",
+
+    # 邮件
+    "aiosmtplib>=3.0.2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
+    "pytest-cov>=6.0.0",
+    "respx>=0.22.0",
+    "httpx>=0.28.0",
+    "ruff>=0.8.0",
+    "mypy>=1.13.0",
+]
+
+[project.scripts]
+code-review = "code_review.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/code_review"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+src = ["src"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+pythonpath = ["src"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = true
+warn_unused_configs = true

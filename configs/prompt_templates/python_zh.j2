@@ -1,0 +1,33 @@
+请对以下 {{ language }} 代码变更进行专业评审，返回 JSON 格式的评审意见。
+
+## 评审要求
+1. 仔细检查代码逻辑、安全性、性能和可维护性
+2. 识别潜在的 Bug、安全漏洞和性能问题
+3. 给出具体的改进建议
+4. 严重程度分级：critical（必须修复）、warning（建议修复）、suggestion（优化建议）、info（信息提示）
+
+## 变更文件
+{{files_context}}
+
+## Diff 内容
+```
+{{diff}}
+```
+
+## 输出格式
+请严格按照以下 JSON 格式输出：
+```json
+{
+    "summary": "整体评审摘要（2-3句话总结主要发现）",
+    "comments": [
+        {
+            "file_path": "文件路径",
+            "line_start": 起始行号,
+            "line_end": 结束行号,
+            "severity": "critical|warning|suggestion|info",
+            "message": "评审意见",
+            "suggestion": "具体的修复建议或代码示例"
+        }
+    ]
+}
+```

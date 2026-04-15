@@ -1,0 +1,39 @@
+# 忽略编译缓存
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# 环境变量
+.env
+.env.local
+.env.production
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# 测试
+.pytest_cache/
+htmlcov/
+.coverage
+
+# 类型检查
+.mypy_cache/
+
+# Docker
+docker/pgdata/
+docker/redisdata/
+
+# 日志
+*.log
+
+# 操作系统
+.DS_Store
+Thumbs.db

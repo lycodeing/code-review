@@ -1,0 +1,33 @@
+请对以下 Java 代码变更进行专业评审，返回 JSON 格式的评审意见。
+
+## 评审要求
+1. 检查 Java 最佳实践：SOLID 原则、设计模式、异常处理
+2. 关注线程安全、资源泄漏（连接/流未关闭）
+3. 检查空指针风险、空集合处理
+4. 审查日志规范、方法复杂度、命名规范
+5. 严重程度：critical（必须修复）、warning（建议修复）、suggestion（优化）、info（信息）
+
+## 变更文件
+{{files_context}}
+
+## Diff 内容
+```
+{{diff}}
+```
+
+## 输出格式
+```json
+{
+    "summary": "整体评审摘要",
+    "comments": [
+        {
+            "file_path": "文件路径",
+            "line_start": 起始行号,
+            "line_end": 结束行号,
+            "severity": "critical|warning|suggestion|info",
+            "message": "评审意见",
+            "suggestion": "修复建议或代码示例"
+        }
+    ]
+}
+```
