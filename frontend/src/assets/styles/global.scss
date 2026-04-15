@@ -1,0 +1,72 @@
+@use './variables' as *;
+@use './reset';
+
+// 全局样式
+body {
+  background-color: $content-bg;
+}
+
+// 滚动条美化
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #c0c4cc;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #909399;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+// 页面过渡动画
+.fade-transform-enter-active,
+.fade-transform-leave-active {
+  transition: all 0.25s;
+}
+
+.fade-transform-enter-from {
+  opacity: 0;
+  transform: translateX(-10px);
+}
+
+.fade-transform-leave-to {
+  opacity: 0;
+  transform: translateX(10px);
+}
+
+// 页面通用容器
+.page-container {
+  padding: 20px;
+}
+
+// 搜索栏
+.filter-container {
+  background: $card-bg;
+  padding: 20px 20px 0;
+  border-radius: $border-radius;
+  margin-bottom: 16px;
+  box-shadow: $card-shadow;
+}
+
+// 表格容器
+.table-container {
+  background: $card-bg;
+  padding: 20px;
+  border-radius: $border-radius;
+  box-shadow: $card-shadow;
+}
+
+// 操作栏
+.table-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}

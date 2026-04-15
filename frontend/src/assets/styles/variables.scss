@@ -1,0 +1,38 @@
+// SCSS 变量定义
+
+// 颜色
+$primary-color: #409EFF;
+$success-color: #67C23A;
+$warning-color: #E6A23C;
+$danger-color: #F56C6C;
+$info-color: #909399;
+
+// 侧边栏
+$sidebar-width: 210px;
+$sidebar-collapsed-width: 64px;
+$sidebar-bg: #304156;
+$sidebar-text: #bfcbd9;
+$sidebar-active-text: #409EFF;
+$sidebar-hover-bg: #263445;
+
+// 顶部栏
+$header-height: 56px;
+$header-bg: #ffffff;
+$header-border: #e6e6e6;
+
+// 内容区域
+$content-bg: #f0f2f5;
+$card-bg: #ffffff;
+
+// 标签页
+$tabs-height: 40px;
+
+// 阴影
+$box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
+$card-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+
+// 圆角
+$border-radius: 6px;
+
+// 过渡
+$transition-duration: 0.3s;
