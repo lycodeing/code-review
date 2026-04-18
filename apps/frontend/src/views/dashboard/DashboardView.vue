@@ -98,8 +98,8 @@ import {
   GridComponent,
   LegendComponent
 } from 'echarts/components'
-import { getReviews } from '@/api/review'
-import { getProjects } from '@/api/project'
+import { getReviews } from '@/api/reviews'
+import { getProjects } from '@/api/projects'
 import { formatDateTime } from '@/utils/format'
 import StatusTag from '@/components/common/StatusTag.vue'
 import axios from 'axios'

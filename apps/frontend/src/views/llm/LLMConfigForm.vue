@@ -141,7 +141,7 @@
 import { ref, reactive, computed, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Connection } from '@element-plus/icons-vue'
-import { createLLMConfig, updateLLMConfig, testLLMConnection } from '@/api/llm'
+import { createLLMConfig, updateLLMConfig, testLLMConnection } from '@/api/llmConfigs'
 
 const props = defineProps({
   visible: Boolean,

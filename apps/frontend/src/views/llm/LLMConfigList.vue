@@ -102,7 +102,7 @@ import {
   deleteLLMConfig,
   toggleLLMConfig,
   testLLMConnection
-} from '@/api/llm'
+} from '@/api/llmConfigs'
 import LLMConfigForm from './LLMConfigForm.vue'
 
 const loading = ref(false)

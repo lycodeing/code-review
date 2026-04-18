@@ -106,7 +106,7 @@
 <script setup>
 import { ref, reactive, computed, watch, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { createTemplate, updateTemplate } from '@/api/template'
+import { createTemplate, updateTemplate } from '@/api/templates'
 
 // CodeMirror 6
 import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection } from '@codemirror/view'

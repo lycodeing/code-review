@@ -98,7 +98,7 @@
 <script setup>
 import { ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { getTemplates, deleteTemplate } from '@/api/template'
+import { getTemplates, deleteTemplate } from '@/api/templates'
 import { useTable } from '@/composables/useTable'
 import { formatDateTime } from '@/utils/format'
 import TemplateForm from './TemplateForm.vue'

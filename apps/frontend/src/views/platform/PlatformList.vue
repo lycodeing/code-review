@@ -88,7 +88,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { getPlatforms, deletePlatform, updatePlatform } from '@/api/platform'
+import { getPlatforms, deletePlatform, updatePlatform } from '@/api/platforms'
 import { platformColors, platformNames } from '@/utils/format'
 import PlatformForm from './PlatformForm.vue'
 import BindingConfig from '../notification/BindingConfig.vue'

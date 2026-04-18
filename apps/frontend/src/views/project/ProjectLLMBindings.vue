@@ -146,7 +146,7 @@ import {
   updateProjectLLMBinding,
   deleteProjectLLMBinding,
   setDefaultLLMBinding
-} from '@/api/llm'
+} from '@/api/llmConfigs'
 
 const props = defineProps({
   visible: Boolean,

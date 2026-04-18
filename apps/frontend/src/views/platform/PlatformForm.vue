@@ -53,7 +53,7 @@
 <script setup>
 import { ref, reactive, computed, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { createPlatform, updatePlatform } from '@/api/platform'
+import { createPlatform, updatePlatform } from '@/api/platforms'
 
 const props = defineProps({
   visible: Boolean,

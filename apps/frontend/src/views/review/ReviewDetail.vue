@@ -89,7 +89,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
-import { getReview, getReviewComments } from '@/api/review'
+import { getReview, getReviewComments } from '@/api/reviews'
 import { formatDateTime } from '@/utils/format'
 import StatusTag from '@/components/common/StatusTag.vue'
 

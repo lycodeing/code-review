@@ -146,7 +146,7 @@ import {
   updateProjectPromptBinding,
   deleteProjectPromptBinding,
   setDefaultPromptBinding
-} from '@/api/template'
+} from '@/api/templates'
 
 const props = defineProps({
   visible: Boolean,

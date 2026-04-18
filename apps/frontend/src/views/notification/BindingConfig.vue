@@ -35,7 +35,7 @@
 import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { getNotification, updateBinding } from '@/api/notification'
-import { getPlatform } from '@/api/platform'
+import { getPlatform } from '@/api/platforms'
 import { platformNames } from '@/utils/format'
 
 const channelNames = { dingtalk: '钉钉', feishu: '飞书' }

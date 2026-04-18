@@ -44,7 +44,7 @@
 <script setup>
 import { ref, reactive, computed, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { createProject, updateProject } from '@/api/project'
+import { createProject, updateProject } from '@/api/projects'
 
 const props = defineProps({
   visible: Boolean,
