@@ -31,11 +31,21 @@ class ParsedReview:
 class ResponseParser(ABC):
     @abstractmethod
     def can_parse(self, content: str) -> bool:
-        pass
+        """判断该解析器是否能处理给定内容。
+
+        返回 True 表示该解析器可以尝试解析此内容，此时调用 parse() 应能成功。
+        注意：PlainTextParser 是例外，它永远返回 True 作为兜底解析器，
+        因此必须排在解析器列表的最后位置。
+        """
+        ...
 
     @abstractmethod
     def parse(self, content: str) -> ParsedReview:
-        pass
+        """解析 LLM 响应内容并返回结构化评审结果。
+
+        解析成功返回 ParsedReview，失败时抛出 ValueError。
+        """
+        ...
 
 
 def extract_json_block(content: str) -> str:

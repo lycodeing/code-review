@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 
 from .base import ResponseParser, ParsedReview, ResponseFormat, fix_json_string, parse_comments_list
 
@@ -11,12 +12,18 @@ logger = logging.getLogger(__name__)
 class JSONParser(ResponseParser):
     def can_parse(self, content: str) -> bool:
         content_stripped = content.strip()
-        return (
-            content_stripped.startswith("{") or
-            content_stripped.startswith("[") or
-            "```json" in content or
-            "```" in content
-        )
+        if content_stripped.startswith("{") or content_stripped.startswith("["):
+            return True
+        if "```json" in content:
+            return True
+        # 对于普通代码块，只有块内容看起来像 JSON 才返回 True，避免过于宽松的误判
+        if "```" in content:
+            code_blocks = re.findall(r'```(?:\w+)?\n?(.*?)```', content, re.DOTALL)
+            return any(
+                block.strip().startswith("{") or block.strip().startswith("[")
+                for block in code_blocks
+            )
+        return False
 
     def parse(self, content: str) -> ParsedReview:
         warnings = []
@@ -58,6 +65,11 @@ class JSONParser(ResponseParser):
         )
 
     def _try_partial_parse(self, json_str: str, warnings: list[str]) -> dict | None:
+        """字符级状态机，从截断的 JSON 响应中提取完整的 comment 对象。
+
+        当完整 JSON 解析失败时，尝试定位 "comments" 数组并逐个提取其中结构完整的
+        对象，忽略被截断的尾部内容。成功时返回包含提取结果的字典，失败时返回 None。
+        """
         try:
             comments_start = json_str.find('"comments"')
             if comments_start == -1:

@@ -21,39 +21,44 @@ class AnthropicThinkingParser(ResponseParser):
 
         try:
             data = self._extract_json(content)
-            if isinstance(data, dict):
-                summary = data.get("summary", "")
-                if any(k in data for k in ["thinking", "reasoning_content", "thinking_blocks"]):
-                    warnings.append("检测到 thinking blocks，已忽略推理过程")
-                comments_data = data.get("comments", [])
-                if not comments_data and "content" in data:
-                    for block in data["content"]:
-                        if isinstance(block, dict) and block.get("type") == "text":
-                            text = block.get("text", "")
-                            if text:
-                                try:
-                                    embedded = json.loads(text)
-                                    if "comments" in embedded:
-                                        comments_data = embedded["comments"]
-                                        if not summary:
-                                            summary = embedded.get("summary", "")
-                                        break
-                                except json.JSONDecodeError:
-                                    pass
-                comments, parse_warnings = parse_comments_list(comments_data)
-                warnings.extend(parse_warnings)
+        except (ValueError, json.JSONDecodeError) as e:
+            logger.error(f"Anthropic 格式解析失败: {e}", exc_info=True)
+            raise ValueError(f"Anthropic 格式解析失败: {e}") from e
 
-            logger.info(f"Anthropic 格式解析成功: {len(comments)} 条评审意见")
-            return ParsedReview(
-                comments=comments,
-                summary=summary,
-                format_used=ResponseFormat.ANTHROPIC_THINKING,
-                raw_content=content,
-                warnings=warnings,
-            )
-        except Exception as e:
-            logger.error(f"Anthropic 格式解析失败: {e}")
-            raise
+        if isinstance(data, dict):
+            summary = data.get("summary", "")
+            if any(k in data for k in ["thinking", "reasoning_content", "thinking_blocks"]):
+                warnings.append("检测到 thinking blocks，已忽略推理过程")
+            comments_data = data.get("comments", [])
+            if not comments_data and "content" in data:
+                for block in data["content"]:
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        text = block.get("text", "")
+                        if text:
+                            try:
+                                embedded = json.loads(text)
+                                if "comments" in embedded:
+                                    comments_data = embedded["comments"]
+                                    if not summary:
+                                        summary = embedded.get("summary", "")
+                                    break
+                            except json.JSONDecodeError:
+                                pass
+            try:
+                comments, parse_warnings = parse_comments_list(comments_data)
+            except Exception as e:
+                logger.error(f"Anthropic 格式评论列表解析失败: {e}", exc_info=True)
+                raise ValueError(f"Anthropic 格式评论列表解析失败: {e}") from e
+            warnings.extend(parse_warnings)
+
+        logger.info(f"Anthropic 格式解析成功: {len(comments)} 条评审意见")
+        return ParsedReview(
+            comments=comments,
+            summary=summary,
+            format_used=ResponseFormat.ANTHROPIC_THINKING,
+            raw_content=content,
+            warnings=warnings,
+        )
 
     def _extract_json(self, content: str) -> dict:
         try:

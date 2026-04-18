@@ -24,6 +24,11 @@ class PlainTextParser(ResponseParser):
     )
 
     def can_parse(self, content: str) -> bool:
+        """兜底解析器，永远返回 True。
+
+        此解析器必须排在解析器列表的最后位置，仅在所有其他解析器均无法处理内容时
+        作为最终降级方案使用。通过正则表达式提取结构化评审意见，准确性相对较低。
+        """
         return True
 
     def parse(self, content: str) -> ParsedReview:

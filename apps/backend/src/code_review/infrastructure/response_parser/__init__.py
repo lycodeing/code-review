@@ -3,7 +3,9 @@
 对外导出与原 response_parser.py 完全兼容的接口，调用方无需修改 import 语句。
 """
 
+import json
 import logging
+import xml.etree.ElementTree as ET
 
 from code_review.core.llm import ReviewComment
 
@@ -27,10 +29,10 @@ class MultiFormatResponseParser:
             PlainTextParser(),
         ]
         self._format_parser_map = {
-            ResponseFormat.JSON: JSONParser(),
-            ResponseFormat.ANTHROPIC_THINKING: AnthropicThinkingParser(),
-            ResponseFormat.XML: XMLParser(),
-            ResponseFormat.PLAIN_TEXT: PlainTextParser(),
+            ResponseFormat.ANTHROPIC_THINKING: self._parsers[0],
+            ResponseFormat.XML: self._parsers[1],
+            ResponseFormat.JSON: self._parsers[2],
+            ResponseFormat.PLAIN_TEXT: self._parsers[3],
         }
 
     def parse(self, content: str, format_hint: ResponseFormat = ResponseFormat.AUTO) -> ParsedReview:
@@ -44,7 +46,7 @@ class MultiFormatResponseParser:
                 self._log_result(result)
                 return result
             except Exception as e:
-                logger.error(f"指定格式解析器失败: {e}，降级到自动检测")
+                logger.error(f"指定格式解析器失败: {e}，降级到自动检测", exc_info=True)
 
         for parser in self._parsers:
             try:
@@ -53,8 +55,8 @@ class MultiFormatResponseParser:
                     result = parser.parse(content)
                     self._log_result(result)
                     return result
-            except Exception as e:
-                logger.info(f"{parser.__class__.__name__} 失败: {e}")
+            except (ValueError, KeyError, AttributeError, json.JSONDecodeError, ET.ParseError) as e:
+                logger.info(f"{parser.__class__.__name__} 失败: {e}", exc_info=True)
                 continue
 
         error_msg = "所有解析器都无法解析该响应内容"
