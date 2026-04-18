@@ -1,7 +1,7 @@
 """数据库 ORM 模型（SQLAlchemy async）。"""
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import (
     JSON,
@@ -35,8 +35,8 @@ class Project(Base):
     webhook_secret = Column(String(512), nullable=True, comment="Webhook 签名密钥")
     config = Column(JSON, nullable=True, comment="项目级配置覆盖（文件过滤、评论模式等）")
     enabled = Column(Integer, nullable=False, default=1, comment="是否启用")
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
-    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(tz=timezone.utc))
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(tz=timezone.utc), onupdate=lambda: datetime.now(tz=timezone.utc))
 
     reviews = relationship("ReviewTask", back_populates="project", cascade="all, delete-orphan")
 
@@ -72,9 +72,9 @@ class ReviewTask(Base):
     summary = Column(Text, nullable=True)
     error_message = Column(Text, nullable=True)
     celery_task_id = Column(String(255), nullable=True)
-    started_at = Column(DateTime, nullable=True)
-    completed_at = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    started_at = Column(DateTime(timezone=True), nullable=True)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(tz=timezone.utc))
 
     project = relationship("Project", back_populates="reviews")
     comments = relationship("ReviewComment", back_populates="task", cascade="all, delete-orphan")
@@ -98,8 +98,8 @@ class PromptTemplate(Base):
     category = Column(String(64), nullable=False, default="default", comment="模板分类：python/java/go/default 等")
     locale = Column(String(10), nullable=False, default="zh", comment="语言标识：zh / en")
     enabled = Column(Integer, nullable=False, default=1, comment="是否启用：1 启用 / 0 禁用")
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
-    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(tz=timezone.utc))
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(tz=timezone.utc), onupdate=lambda: datetime.now(tz=timezone.utc))
 
     project_bindings = relationship(
         "ProjectPromptBinding",
@@ -130,7 +130,7 @@ class ReviewComment(Base):
     message = Column(Text, nullable=False)
     suggestion = Column(Text, nullable=True)
     platform_comment_id = Column(String(255), nullable=True, comment="平台上已发布的评论 ID")
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(tz=timezone.utc))
 
     task = relationship("ReviewTask", back_populates="comments")
 
@@ -149,8 +149,8 @@ class PlatformConfig(Base):
     api_url = Column(String(512), nullable=False, default="", comment="API 基础地址")
     enabled = Column(Boolean, nullable=False, default=True, comment="是否启用")
     description = Column(String(512), nullable=False, default="", comment="说明文字")
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
-    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(tz=timezone.utc))
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(tz=timezone.utc), onupdate=lambda: datetime.now(tz=timezone.utc))
 
     notification_bindings = relationship(
         "PlatformNotificationBinding",
@@ -173,8 +173,8 @@ class NotificationConfig(Base):
     secret = Column(Text, nullable=False, default="", comment="签名密钥（加密）")
     at_mobiles = Column(String(1024), nullable=False, default="", comment="@人手机号（逗号分隔）")
     description = Column(String(512), nullable=False, default="", comment="说明文字")
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
-    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(tz=timezone.utc))
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(tz=timezone.utc), onupdate=lambda: datetime.now(tz=timezone.utc))
 
     platform_bindings = relationship(
         "PlatformNotificationBinding",
@@ -202,7 +202,7 @@ class PlatformNotificationBinding(Base):
         nullable=False,
     )
     enabled = Column(Boolean, nullable=False, default=True, comment="绑定是否启用")
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(tz=timezone.utc))
 
     platform = relationship("PlatformConfig", back_populates="notification_bindings")
     notification = relationship("NotificationConfig", back_populates="platform_bindings")
@@ -244,8 +244,8 @@ class LLMConfig(Base):
     )
     enabled = Column(Boolean, nullable=False, default=True, comment="是否启用")
     description = Column(String(512), nullable=False, default="", comment="说明文字")
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
-    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(tz=timezone.utc))
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(tz=timezone.utc), onupdate=lambda: datetime.now(tz=timezone.utc))
 
     project_bindings = relationship(
         "ProjectLLMBinding",
@@ -281,7 +281,7 @@ class ProjectLLMBinding(Base):
     is_default = Column(Boolean, nullable=False, default=False, comment="是否为项目默认配置")
     priority = Column(Integer, nullable=False, default=0, comment="优先级（数字越大优先级越高）")
     enabled = Column(Boolean, nullable=False, default=True, comment="绑定是否启用")
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(tz=timezone.utc))
 
     project = relationship("Project")
     llm_config = relationship("LLMConfig", back_populates="project_bindings")
@@ -314,7 +314,7 @@ class ProjectPromptBinding(Base):
     is_default = Column(Boolean, nullable=False, default=False, comment="是否为项目默认模板")
     priority = Column(Integer, nullable=False, default=0, comment="优先级（数字越大优先级越高）")
     enabled = Column(Boolean, nullable=False, default=True, comment="绑定是否启用")
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(tz=timezone.utc))
 
     project = relationship("Project")
     template = relationship("PromptTemplate", back_populates="project_bindings")
