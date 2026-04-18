@@ -1,48 +1,41 @@
+x-backend: &backend
+  build:
+    context: ../apps/backend
+    dockerfile: Dockerfile
+  env_file: ../apps/backend/configs/.env
+  environment:
+    - CODE_REVIEW__DATABASE__URL=postgresql+asyncpg://postgres:postgres@db:5432/code_review
+    - CODE_REVIEW__REDIS__URL=redis://redis:6379/0
+    - CODE_REVIEW__CELERY__BROKER_URL=redis://redis:6379/1
+    - CODE_REVIEW__CELERY__RESULT_BACKEND=redis://redis:6379/2
+  depends_on:
+    db:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+  restart: unless-stopped
+
 services:
-  # ---- FastAPI 应用 ----
   app:
-    build:
-      context: ../apps/backend
-      dockerfile: Dockerfile
+    <<: *backend
     container_name: code-review-app
     ports:
       - "8000:8000"
-    env_file:
-      - ../apps/backend/configs/.env
-    environment:
-      - CODE_REVIEW__DATABASE__URL=postgresql+asyncpg://postgres:postgres@db:5432/code_review
-      - CODE_REVIEW__REDIS__URL=redis://redis:6379/0
-      - CODE_REVIEW__CELERY__BROKER_URL=redis://redis:6379/1
-      - CODE_REVIEW__CELERY__RESULT_BACKEND=redis://redis:6379/2
-    depends_on:
-      db:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    restart: unless-stopped
 
-  # ---- Celery Worker ----
   worker:
-    build:
-      context: ../apps/backend
-      dockerfile: Dockerfile
+    <<: *backend
     container_name: code-review-worker
-    command: ["celery", "-A", "code_review.worker", "worker", "-Q", "review", "-l", "info", "--concurrency=2"]
-    env_file:
-      - ../apps/backend/configs/.env
-    environment:
-      - CODE_REVIEW__DATABASE__URL=postgresql+asyncpg://postgres:postgres@db:5432/code_review
-      - CODE_REVIEW__REDIS__URL=redis://redis:6379/0
-      - CODE_REVIEW__CELERY__BROKER_URL=redis://redis:6379/1
-      - CODE_REVIEW__CELERY__RESULT_BACKEND=redis://redis:6379/2
-    depends_on:
-      db:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    restart: unless-stopped
+    command:
+      - celery
+      - -A
+      - code_review.worker
+      - worker
+      - -Q
+      - review
+      - -l
+      - info
+      - --concurrency=2
 
-  # ---- PostgreSQL ----
   db:
     image: postgres:16-alpine
     container_name: code-review-db
@@ -54,20 +47,13 @@ services:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ../apps/backend/configs/migrations/001_init.sql:/docker-entrypoint-initdb.d/001_init.sql
-      - ../apps/backend/configs/migrations/002_prompt_templates.sql:/docker-entrypoint-initdb.d/002_prompt_templates.sql
-      - ../apps/backend/configs/migrations/003_platform_and_notification_configs.sql:/docker-entrypoint-initdb.d/003_platform_and_notification_configs.sql
-      - ../apps/backend/configs/migrations/004_add_response_format.sql:/docker-entrypoint-initdb.d/004_add_response_format.sql
-      - ../apps/backend/configs/migrations/005_add_project_prompt_bindings.sql:/docker-entrypoint-initdb.d/005_add_project_prompt_bindings.sql
-      - ../apps/backend/migrations/006_add_llm_configs.sql:/docker-entrypoint-initdb.d/006_add_llm_configs.sql
+      - ../apps/backend/migrations:/docker-entrypoint-initdb.d
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 5s
+      interval: 10s
       timeout: 5s
       retries: 5
-    restart: unless-stopped
 
-  # ---- Redis ----
   redis:
     image: redis:7-alpine
     container_name: code-review-redis
@@ -77,10 +63,9 @@ services:
       - redisdata:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
+      interval: 10s
       timeout: 5s
       retries: 5
-    restart: unless-stopped
 
 volumes:
   pgdata:
