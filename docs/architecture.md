@@ -1,304 +1,213 @@
-# Code Review 系统架构图与时序流程图
+# 系统架构文档
 
-> 基于 Mermaid 语法，可直接在任何支持 Mermaid 的 Markdown 编辑器中渲染。
+> 基于 Mermaid 语法，可在支持 Mermaid 的 Markdown 编辑器中直接渲染。
 
 ---
 
-## 1. 系统架构图（组件关系与数据流向）
+## 1. 系统架构图
 
 ```mermaid
-graph TB
-    subgraph EXT["外部系统"]
-        GITEE["Gitee / GitHub / GitLab<br/>代码托管平台"]
-        LLM["LLM Provider<br/>DashScope · Qwen 3.6-plus"]
-        FEISHU["飞书 / 钉钉 / 邮件<br/>即时通讯通知"]
-        ADMIN["管理员 / CI<br/>REST API 调用方"]
+graph TD
+    subgraph 外部系统["🌐 外部系统"]
+        GitHub["GitHub"]
+        GitLab["GitLab"]
+        Gitee["Gitee"]
+        LLMCloud["LLM 服务\nOpenAI / Claude / DeepSeek / Ollama"]
+        Feishu["飞书"]
+        DingTalk["钉钉"]
+        Email["邮件服务"]
     end
 
-    subgraph NET["网络层（公网 → 内网）"]
-        INTERNET((Internet))
-        NGINX["Nginx<br/>*.lycodeing.cn 反代"]
-        FRPS["frps<br/>lycodeing.cn:7000"]
-        FRPC["frpc<br/>HTTP 隧道 → localhost:8000"]
+    subgraph 前端["🖥️ 前端 Vue 3（:3000）"]
+        Views["页面组件 views/\n项目 / 评审 / 平台 / 通知 / LLM / 模板"]
+        Pinia["Pinia 状态管理 stores/"]
+        AxiosClient["Axios HTTP 客户端 api/"]
+        VueRouter["Vue Router router/"]
     end
 
-    subgraph DOCKER["Docker Compose 服务集群"]
-        subgraph APP_SVC["app 服务 (FastAPI + Uvicorn)"]
-            WEBHOOK["Webhook Handler<br/>/webhook/{platform}"]
-            MGMT["Management API<br/>/api/v1/projects<br/>/api/v1/reviews<br/>/api/v1/prompt-templates"]
-            ORCH_IN["ReviewOrchestrator<br/>process_webhook_event()"]
-            FACTORY["Adapter Factory<br/>策略模式创建适配器"]
+    subgraph 后端["🔧 后端 FastAPI（:8000）"]
+        subgraph API层["📡 API 层 api/"]
+            WebhookEndpoint["POST /webhook\nWebhook 接收 + 签名验证"]
+            ProjectsAPI["/projects  项目 CRUD"]
+            ReviewsAPI["/reviews  评审列表 / 手动触发"]
+            ConfigAPIs["/platform-configs\n/notification-configs\n/llm-configs\n/prompt-templates"]
         end
 
-        subgraph WORKER_SVC["worker 服务 (Celery ForkPoolWorker)"]
-            CELERY["Celery Worker<br/>review 队列消费者"]
-            ORCH_EXEC["ReviewOrchestrator<br/>execute_review()"]
-            AGG["CommentAggregator<br/>评论聚合引擎"]
-            PM["PromptTemplateManager<br/>模板热加载"]
-            LLM_REV["LiteLLMReviewer<br/>AI 评审引擎"]
-            NOTIF["NotificationManager<br/>通知调度器"]
+        subgraph Service层["⚙️ Service 层 services/"]
+            ReviewOrchestrator["ReviewOrchestrator\n评审编排引擎"]
+            CommentAggregator["CommentAggregator\n相邻合并 · 严重度排序 · 数量截断"]
+            ConfigServices["PlatformConfigService\nNotificationConfigService\nLLMConfigService\nPromptTemplateService"]
         end
 
-        subgraph ADAPTERS["平台适配器层 (Strategy Pattern)"]
-            GA["GitHubAdapter<br/>HMAC-SHA256 · PR Review API"]
-            GLA["GitLabAdapter<br/>Token 验证 · Position 评论"]
-            GEA["GiteeAdapter<br/>HMAC 签名 · 批量评论"]
-            BASE["BasePlatformAdapter<br/>httpx · tenacity 重试<br/>分页 · 速率限制"]
+        subgraph Infra层["🏗️ 基础设施层 infrastructure/"]
+            LLMReviewers["LiteLLM 调用器\nLangChain 调用器"]
+            ResponseParser["响应解析器\nJSON · XML · Anthropic · 纯文本"]
+            NotificationMgr["通知管理器\n飞书 · 钉钉 · 邮件"]
+            PromptMgr["PromptManager\n模板热加载（DB 实时查询）"]
+            ConfigCrypto["AES-256-GCM 加密\n敏感字段加密存储"]
+            RedisCache["Redis TTL 缓存\n事件去重（TTL=3600s）"]
+            CeleryApp["Celery 任务队列"]
         end
 
-        subgraph CHANNELS["通知渠道 (Strategy Pattern)"]
-            FC["FeishuChannel<br/>消息卡片 · HMAC 签名"]
-            DC["DingTalkChannel<br/>Markdown · 签名 URL"]
-            EC["EmailChannel<br/>aiosmtplib（预留）"]
+        subgraph Adapters层["🔌 适配层 adapters/"]
+            PlatformFactory["PlatformFactory\n策略模式"]
+            GitHubAdapter["GitHubAdapter\nHMAC-SHA256 验证"]
+            GitLabAdapter["GitLabAdapter\nToken 验证"]
+            GiteeAdapter["GiteeAdapter\nSHA256 验证"]
         end
 
-        subgraph STORE["数据层"]
-            PG[("PostgreSQL 16<br/>projects<br/>review_tasks<br/>review_comments<br/>prompt_templates")]
-            RD[("Redis 7<br/>DB0: 缓存<br/>DB1: Celery Broker<br/>DB2: Celery Backend")]
-            CACHE["TTLCache<br/>进程内事件去重<br/>TTL=3600s · max=10000"]
+        subgraph Core层["📦 核心抽象层 core/"]
+            PlatformABC["PlatformAdapter ABC"]
+            LLMInterface["LLM 接口"]
+            NotifyInterface["Notification 接口"]
+        end
+
+        subgraph Worker["⚡ Celery Worker（独立进程）"]
+            CeleryWorker["异步执行评审任务\nconcurrency=2"]
         end
     end
 
-    %% === 外部请求流 ===
-    GITEE -- "1. PR 事件 Webhook" --> INTERNET
-    ADMIN -- "REST API" --> INTERNET
-    INTERNET --> NGINX
-    NGINX -- "2. cr.lycodeing.cn" --> FRPS
-    FRPS -- "3. frp 隧道" --> FRPC
-    FRPC -- "4. :8000" --> WEBHOOK
-    ADMIN -. "API 直连 :8000" .-> MGMT
+    subgraph 数据存储["💿 数据存储"]
+        PostgreSQL["PostgreSQL 16\nprojects · review_tasks · review_comments\nprompt_templates · platform_configs\nnotification_configs · llm_configs\nproject_prompt_bindings · project_llm_bindings\nplatform_notification_bindings"]
+        Redis["Redis 7\nDB0: 事件去重缓存\nDB1: Celery Broker\nDB2: Celery Backend"]
+    end
 
-    %% === Webhook 处理流 ===
-    WEBHOOK --> FACTORY
-    FACTORY --> GEA
-    WEBHOOK --> ORCH_IN
-    ORCH_IN --> CACHE
-    ORCH_IN --> PG
-    ORCH_IN -- "send_task" --> RD
+    %% 前端 → 后端
+    Views --> Pinia & VueRouter
+    Pinia --> AxiosClient
+    AxiosClient --> API层
 
-    %% === Celery 异步流 ===
-    RD -- "6. 消费任务" --> CELERY
-    CELERY --> ORCH_EXEC
-    ORCH_EXEC --> FACTORY
-    FACTORY --> GA & GLA & GEA
-    GA & GLA & GEA --> BASE
-    ORCH_EXEC --> PG
-    ORCH_EXEC --> PM
-    PM --> PG
-    ORCH_EXEC --> LLM_REV
-    ORCH_EXEC --> AGG
-    ORCH_EXEC --> NOTIF
-    ORCH_EXEC -. "5. 发布评论" .-> GITEE
+    %% API 层
+    WebhookEndpoint --> ReviewOrchestrator
+    ReviewsAPI --> ReviewOrchestrator
+    ProjectsAPI & ConfigAPIs --> ConfigServices
 
-    %% === LLM 调用 ===
-    LLM_REV -- "LiteLLM acompletion" --> LLM
+    %% Service 层
+    ReviewOrchestrator --> RedisCache
+    ReviewOrchestrator --> CeleryApp --> CeleryWorker
+    CeleryWorker --> ReviewOrchestrator
 
-    %% === 平台 API 回调 ===
-    BASE -- "get_mr_info / get_mr_changes" --> GITEE
-    BASE -- "publish_comments_batch" --> GITEE
+    ReviewOrchestrator --> PlatformFactory
+    PlatformFactory --> GitHubAdapter & GitLabAdapter & GiteeAdapter
+    GitHubAdapter --> GitHub
+    GitLabAdapter --> GitLab
+    GiteeAdapter --> Gitee
 
-    %% === 通知发送 ===
-    NOTIF --> FC & DC & EC
-    FC & DC -- "Webhook POST" --> FEISHU
+    ReviewOrchestrator --> LLMReviewers --> LLMCloud
+    LLMReviewers --> ResponseParser --> CommentAggregator
 
-    %% === 样式 ===
-    classDef external fill:#fef3c7,stroke:#d97706,stroke-width:2px,color:#92400e
-    classDef network fill:#dbeafe,stroke:#2563eb,stroke-width:2px,color:#1e40af
-    classDef service fill:#d1fae5,stroke:#059669,stroke-width:2px,color:#065f46
-    classDef data fill:#ede9fe,stroke:#7c3aed,stroke-width:2px,color:#5b21b6
-    classDef adapter fill:#fce7f3,stroke:#db2777,stroke-width:2px,color:#9d174d
-    classDef channel fill:#fff7ed,stroke:#ea580c,stroke-width:2px,color:#9a3412
+    ReviewOrchestrator --> PromptMgr
+    ReviewOrchestrator --> NotificationMgr
+    NotificationMgr --> Feishu & DingTalk & Email
 
-    class GITEE,LLM,FEISHU,ADMIN external
-    class INTERNET,NGINX,FRPS,FRPC network
-    class WEBHOOK,MGMT,ORCH_IN,FACTORY,CELERY,ORCH_EXEC,AGG,PM,LLM_REV,NOTIF service
-    class GA,GLA,GEA,BASE adapter
-    class FC,DC,EC channel
-    class PG,RD,CACHE data
+    ConfigServices --> ConfigCrypto
+
+    %% 抽象接口实现
+    GitHubAdapter & GitLabAdapter & GiteeAdapter -.->|实现| PlatformABC
+    LLMReviewers -.->|实现| LLMInterface
+    NotificationMgr -.->|实现| NotifyInterface
+
+    %% 数据库
+    Service层 & API层 & CeleryWorker --> PostgreSQL
+    RedisCache & CeleryApp --> Redis
+
+    style 外部系统   fill:#e1f5ff,stroke:#01579b,stroke-width:2px
+    style 前端       fill:#f3e5f5,stroke:#4a148c,stroke-width:2px
+    style 后端       fill:#e8f5e9,stroke:#1b5e20,stroke-width:2px
+    style API层      fill:#fff3e0,stroke:#e65100,stroke-width:1px
+    style Service层  fill:#fce4ec,stroke:#880e4f,stroke-width:1px
+    style Infra层    fill:#f1f8e9,stroke:#33691e,stroke-width:1px
+    style Adapters层 fill:#e0f2f1,stroke:#004d40,stroke-width:1px
+    style Core层     fill:#ede7f6,stroke:#311b92,stroke-width:1px
+    style Worker     fill:#fff9c4,stroke:#f57f17,stroke-width:1px
+    style 数据存储   fill:#ffebee,stroke:#b71c1c,stroke-width:2px
 ```
 
 ---
 
-## 2. 端到端时序流程图
+## 2. 端到端时序图：Webhook → 评审完成
 
 ```mermaid
 sequenceDiagram
     autonumber
     participant Dev as 开发者
-    participant Gitee as Gitee
-    participant Nginx as Nginx
-    participant Frp as frp隧道
-    participant App as FastAPI
-    participant Cache as 去重缓存
-    participant DB as PostgreSQL
+    participant Platform as 代码平台
+    participant App as FastAPI :8000
     participant Redis as Redis
+    participant DB as PostgreSQL
     participant Worker as Celery Worker
-    participant Adapter as GiteeAdapter
-    participant PM as 模板管理器
-    participant LLM as LLM评审器
-    participant Agg as 评论聚合器
-    participant Notify as 通知管理器
-    participant IM as 飞书/钉钉
+    participant LLM as LLM 服务
+    participant Notify as 通知渠道
 
     rect rgba(254,243,199,0.3)
-    Note over Dev,Redis: 第一阶段 - Webhook接收与任务分发 约200ms
-    Dev->>Gitee: 创建 Pull Request
-    Gitee-->>Nginx: POST webhook 请求
-    Nginx->>Frp: 反向代理
-    Frp->>App: 隧道转发到 8000 端口
-    Note over App: gitee_webhook 处理请求
-    App->>Adapter: 创建适配器实例
-    App->>Adapter: 验证 Webhook 签名
-    Note right of Adapter: HMAC-SHA256 签名验证
-    Adapter-->>App: 签名通过
-    App->>Adapter: 解析 Webhook 事件
-    Adapter-->>App: WebhookEvent 对象
-    App->>Cache: 检查事件是否重复
-    Cache-->>App: 首次事件
-    App->>Cache: 写入去重标记 TTL 3600s
-    App->>DB: 查询匹配的项目配置
-    DB-->>App: 返回 Project 记录
-    App->>DB: 创建 ReviewTask 记录
-    DB-->>App: 返回 task_id
-    App->>Redis: 投递 Celery 任务到 review 队列
-    App->>DB: 更新 celery_task_id
-    App-->>Gitee: 202 Accepted
+        Note over Dev,DB: 阶段一：Webhook 接收与任务分发（~200ms）
+        Dev->>Platform: 创建 / 更新 Pull Request
+        Platform->>App: POST /webhook/{platform}
+        App->>App: 验证签名（HMAC-SHA256 / Token）
+        App->>App: 解析为 WebhookEvent
+        App->>Redis: 事件去重检查（TTL 缓存）
+        Redis-->>App: 首次事件，通过
+        App->>DB: 查询匹配项目配置
+        App->>DB: 创建 ReviewTask（status=pending）
+        App->>Redis: 投递 Celery 任务
+        App-->>Platform: 202 Accepted
     end
 
     rect rgba(209,250,229,0.3)
-    Note over Redis,IM: 第二阶段 - Celery Worker 异步评审 约60-120s
-
-    Redis-->>Worker: 消费 review 队列
-    Note over Worker: asyncio.run 执行评审<br/>每次创建新 orchestrator
-
-    Worker->>DB: 查询 ReviewTask
-    DB-->>Worker: task 状态为 pending
-    Worker->>DB: 更新状态为 in_progress
-    Worker->>DB: 查询关联的 Project
-    DB-->>Worker: 返回项目配置
-    Worker->>Adapter: 创建平台适配器
-
-    Note over Worker,Gitee: A 获取 PR 信息
-    Worker->>Adapter: get_mr_info
-    Adapter->>Gitee: GET pulls API
-    Gitee-->>Adapter: PR 标题 作者 分支 状态
-    Adapter-->>Worker: MRInfo 对象
-
-    Note over Worker,Gitee: B 获取代码变更
-    Worker->>Adapter: get_mr_changes
-    Adapter->>Gitee: GET files API
-    Gitee-->>Adapter: 文件变更列表
-    Note right of Adapter: patch 兼容处理<br/>dict 提取 diff 键<br/>str 直接使用
-    Adapter-->>Worker: FileChange 列表
-
-    Note over Worker: 文件过滤 排除 lock vendor 等
-
-    Note over Worker,DB: C 加载 Prompt 模板
-    Worker->>PM: 检测文件语言类型
-    PM-->>Worker: java
-    Worker->>PM: 获取模板
-    PM->>DB: 按优先级匹配模板
-    Note right of PM: 匹配链<br/>1 项目指定名称<br/>2 java+zh<br/>3 java+任意<br/>4 default+zh<br/>5 default+任意
-    DB-->>PM: java_zh 模板
-    PM-->>Worker: 模板文本
-
-    Note over Worker,LLM: D AI 评审 核心环节
-    Worker->>Worker: 替换模板占位符
-    Worker->>LLM: review 调用
-    Note right of LLM: LiteLLM acompletion<br/>model: qwen3.6-plus<br/>api: dashscope<br/>temperature: 0.3
-    LLM->>LLM: Qwen 推理中
-    LLM-->>Worker: 返回 JSON 评审结果
-    Note over Worker: 解析 JSON 响应<br/>提取评论列表<br/>映射严重等级枚举
-
-    Note over Worker,Agg: E 评论聚合
-    Worker->>Agg: aggregate
-    Note right of Agg: 1 按文件和行号排序<br/>2 相邻5行合并<br/>3 按严重级别截断<br/>4 生成统计摘要
-    Agg-->>Worker: 聚合后评论和摘要
-
-    Note over Worker,Gitee: F 发布评论
-    Worker->>Adapter: publish_comments_batch
-    Note right of Adapter: 按级别分组格式化<br/>Critical > Warning<br/>Suggestion > Info<br/>每条含路径行号和代码建议
-    Adapter->>Gitee: POST 评论到 PR
-    Gitee-->>Adapter: comment_id
-    Adapter-->>Worker: 发布成功
-
-    Note over Worker,DB: G 持久化结果
-    Worker->>DB: 批量插入 review_comments
-
-    Note over Worker,IM: H 发送通知
-    Worker->>Notify: notify_all
-    Notify->>IM: 飞书卡片消息
-    IM-->>Notify: OK
-    Notify->>IM: 钉钉 Markdown 消息
-    IM-->>Notify: OK
-    Notify-->>Worker: 全部发送成功
-
-    Note over Worker,DB: I 完成任务
-    Worker->>DB: 更新状态为 completed
-    Note right of DB: 写入 model_name<br/>total_comments<br/>critical_count<br/>warning_count<br/>summary
-    Worker-->>Redis: Task succeeded
-    end
-
-    rect rgba(219,234,254,0.3)
-    Note over Dev,IM: 第三阶段 - 结果可达
-    Note over Dev,Gitee: 开发者在 PR 页面看到 AI 评审评论
-    Note over Dev,IM: 团队在飞书或钉钉群收到评审通知
+        Note over Worker,Notify: 阶段二：Celery Worker 异步评审（~60-120s）
+        Redis-->>Worker: 消费 review 队列
+        Worker->>DB: 更新状态 pending → in_progress
+        Worker->>Platform: 获取 MR diff（适配器）
+        Worker->>DB: 读取 Prompt 模板（热加载）
+        Worker->>LLM: 发送 diff + 模板（LiteLLM / LangChain）
+        LLM-->>Worker: 返回评审结果（JSON / XML / 纯文本）
+        Worker->>Worker: 解析响应 + 聚合评论
+        Worker->>Platform: 发布行内评论
+        Worker->>Notify: 发送通知（飞书 / 钉钉 / 邮件）
+        Worker->>DB: 更新状态 → completed，写入统计
     end
 ```
 
 ---
 
-## 3. 核心数据模型关系图
+## 3. 数据模型关系图
 
 ```mermaid
 erDiagram
-    Project ||--o{ ReviewTask : "has many"
-    ReviewTask ||--o{ ReviewComment : "has many"
-    PromptTemplate {
+    projects ||--o{ review_tasks : ""
+    projects ||--o{ project_prompt_bindings : ""
+    projects ||--o{ project_llm_bindings : ""
+    review_tasks ||--o{ review_comments : ""
+    prompt_templates ||--o{ project_prompt_bindings : ""
+    llm_configs ||--o{ project_llm_bindings : ""
+    platform_configs ||--o{ platform_notification_bindings : ""
+    notification_configs ||--o{ platform_notification_bindings : ""
+
+    projects {
         uuid id PK
-        varchar name UK "模板名称（唯一）"
-        text content "模板内容 {{diff}} {{files_context}}"
-        varchar category "分类: default/python/java/go"
-        varchar locale "语言: zh/en"
-        int enabled "1=启用 0=禁用"
-        timestamp created_at
-        timestamp updated_at
-    }
-    Project {
-        uuid id PK
-        varchar name UK "项目名称"
+        varchar name UK
         varchar platform "github/gitlab/gitee"
-        varchar platform_project_id "平台项目ID (owner/repo)"
-        varchar webhook_secret "Webhook签名密钥"
-        json config "项目级配置覆盖"
-        int enabled "1=启用 0=禁用"
-        timestamp created_at
-        timestamp updated_at
+        varchar platform_project_id
+        varchar webhook_secret
+        jsonb config "项目级配置覆盖"
+        int enabled
     }
-    ReviewTask {
+
+    review_tasks {
         uuid id PK
         uuid project_id FK
-        varchar mr_iid "PR展示编号"
-        varchar mr_title
-        varchar mr_author
-        text mr_url
-        varchar source_branch
-        varchar target_branch
+        varchar mr_iid
         varchar status "pending/in_progress/completed/failed"
-        varchar event_id "幂等去重事件ID"
-        varchar trigger_action "opened/synchronize/updated"
-        varchar model_name "使用的LLM模型"
+        varchar event_id "幂等去重"
+        varchar model_name
         int total_comments
         int critical_count
         int warning_count
         text summary
-        text error_message
-        varchar celery_task_id
-        timestamp started_at
-        timestamp completed_at
         timestamp created_at
     }
-    ReviewComment {
+
+    review_comments {
         uuid id PK
         uuid task_id FK
         varchar file_path
@@ -307,8 +216,43 @@ erDiagram
         varchar severity "critical/warning/suggestion/info"
         text message
         text suggestion
-        varchar platform_comment_id "平台评论ID"
-        timestamp created_at
+    }
+
+    prompt_templates {
+        uuid id PK
+        varchar name UK
+        text content "支持 {{diff}} {{files_context}}"
+        varchar category "default/python/java/go"
+        varchar locale "zh/en"
+        int enabled
+    }
+
+    platform_configs {
+        uuid id PK
+        varchar platform UK "github/gitlab/gitee"
+        text access_token "AES-256-GCM 加密"
+        text webhook_secret "AES-256-GCM 加密"
+        varchar api_url
+        boolean enabled
+    }
+
+    notification_configs {
+        uuid id PK
+        varchar channel UK "feishu/dingtalk/email"
+        boolean enabled
+        varchar webhook_url
+        text secret "AES-256-GCM 加密"
+    }
+
+    llm_configs {
+        uuid id PK
+        varchar name UK
+        varchar provider "openai/anthropic/deepseek/ollama"
+        varchar model_name
+        text api_key "AES-256-GCM 加密"
+        varchar api_base
+        varchar response_format "auto/json/xml/anthropic_thinking/plain_text"
+        boolean enabled
     }
 ```
 
@@ -318,79 +262,78 @@ erDiagram
 
 ```mermaid
 flowchart TD
-    START([get_template 调用]) --> CHECK_NAME{项目配置指定了<br/>template_name?}
-    CHECK_NAME -- 是 --> FIND_BY_NAME[DB: SELECT WHERE name=指定名称]
+    START([get_template 调用]) --> CHECK_NAME{项目配置指定\ntemplate_name?}
+    CHECK_NAME -- 是 --> FIND_BY_NAME[按名称精确查询 DB]
     FIND_BY_NAME --> FOUND_NAME{找到且启用?}
-    FOUND_NAME -- 是 --> RETURN_NAME[返回指定模板]
-    FOUND_NAME -- 否 --> FIND_MATCH
+    FOUND_NAME -- 是 --> RETURN[返回模板]
+    FOUND_NAME -- 否 --> CHAIN
 
-    CHECK_NAME -- 否 --> FIND_MATCH[find_best_match 按优先级链查找]
-
-    FIND_MATCH --> P1[① category + locale 精确匹配<br/>例: java + zh → java_zh]
-    P1 --> P1_OK{找到?}
-    P1_OK -- 是 --> RETURN_MATCH[返回匹配模板]
-
-    P1_OK -- 否 --> P2[② category + 任意 locale<br/>例: java + * → java_en]
-    P2 --> P2_OK{找到?}
-    P2_OK -- 是 --> RETURN_MATCH
-
-    P2_OK -- 否 --> P3[③ default + locale<br/>例: default + zh → default_zh]
-    P3 --> P3_OK{找到?}
-    P3_OK -- 是 --> RETURN_MATCH
-
-    P3_OK -- 否 --> P4[④ default + 任意 locale<br/>例: default + * → default_en]
-    P4 --> P4_OK{找到?}
-    P4_OK -- 是 --> RETURN_MATCH
-
-    P4_OK -- 否 --> FALLBACK[使用内置 BUILTIN_TEMPLATES 兜底]
-
-    RETURN_NAME --> END([返回模板文本])
-    RETURN_MATCH --> END
-    FALLBACK --> END
+    CHECK_NAME -- 否 --> CHAIN[优先级链查找]
+    CHAIN --> P1["① category + locale\n例: python + zh → python_zh"]
+    P1 --> P1OK{找到?}
+    P1OK -- 是 --> RETURN
+    P1OK -- 否 --> P2["② category + 任意 locale\n例: python + *"]
+    P2 --> P2OK{找到?}
+    P2OK -- 是 --> RETURN
+    P2OK -- 否 --> P3["③ default + locale\n例: default + zh"]
+    P3 --> P3OK{找到?}
+    P3OK -- 是 --> RETURN
+    P3OK -- 否 --> P4["④ default + 任意 locale"]
+    P4 --> P4OK{找到?}
+    P4OK -- 是 --> RETURN
+    P4OK -- 否 --> FALLBACK["⑤ 代码内置 BUILTIN_TEMPLATES 兜底"]
+    FALLBACK --> RETURN
 
     classDef decision fill:#fef3c7,stroke:#d97706
-    classDef action fill:#d1fae5,stroke:#059669
+    classDef action   fill:#d1fae5,stroke:#059669
     classDef fallback fill:#fee2e2,stroke:#dc2626
-    class CHECK_NAME,FOUND_NAME,P1_OK,P2_OK,P3_OK,P4_OK decision
-    class FIND_BY_NAME,FIND_MATCH,P1,P2,P3,P4,RETURN_NAME,RETURN_MATCH action
+    class CHECK_NAME,FOUND_NAME,P1OK,P2OK,P3OK,P4OK decision
+    class FIND_BY_NAME,CHAIN,P1,P2,P3,P4,RETURN action
     class FALLBACK fallback
 ```
 
 ---
 
-## 5. Docker 部署架构
+## 5. 部署架构
 
 ```mermaid
 graph LR
-    subgraph HOST["宿主机"]
-        subgraph DOCKER["Docker Compose"]
-            APP["code-review-app<br/>FastAPI :8000<br/>uvicorn"]
-            WORKER["code-review-worker<br/>Celery ForkPoolWorker<br/>concurrency=2"]
-            DB["code-review-db<br/>PostgreSQL 16<br/>:5432"]
-            REDIS["code-review-redis<br/>Redis 7<br/>:6379 (宿主 :6380)"]
-        end
-        FRPC["frpc<br/>HTTP 隧道<br/>→ localhost:8000"]
+    subgraph Monorepo["code-review/"]
+        BE["apps/backend/\nFastAPI · Celery · pyproject.toml"]
+        FE["apps/frontend/\nVue 3 · Vite"]
+        DC["docker/docker-compose.yml"]
     end
 
-    subgraph CLOUD["公网服务器 (lycodeing.cn)"]
-        FRPS["frps :7000"]
-        NGINX["Nginx<br/>*.lycodeing.cn → frps"]
+    subgraph DockerCompose["Docker Compose"]
+        App["code-review-app\nFastAPI :8000"]
+        Worker["code-review-worker\nCelery concurrency=2"]
+        DB["code-review-db\nPostgreSQL 16 :5432"]
+        RD["code-review-redis\nRedis 7 :6380"]
     end
 
-    INTERNET((Internet)) --> NGINX
-    NGINX --> FRPS
-    FRPS -. "TCP 隧道" .-> FRPC
-    FRPC --> APP
+    BE -->|构建| App & Worker
+    BE -->|init.sql 初始化| DB
 
-    APP --- DB
-    APP --- REDIS
-    WORKER --- DB
-    WORKER --- REDIS
+    App --- DB & RD
+    Worker --- DB & RD
 
-    classDef svc fill:#d1fae5,stroke:#059669,stroke-width:2px
-    classDef infra fill:#ede9fe,stroke:#7c3aed,stroke-width:2px
-    classDef net fill:#dbeafe,stroke:#2563eb,stroke-width:2px
-    class APP,WORKER svc
-    class DB,REDIS infra
-    class FRPC,FRPS,NGINX net
+    FE -->|npm run dev| Dev["开发服务器 :3000"]
+    FE -->|npm run build| Static["静态文件（可由 Nginx 托管）"]
+
+    style Monorepo fill:#f0f4ff,stroke:#3b5bdb,stroke-width:2px
+    style DockerCompose fill:#f0fff4,stroke:#2f9e44,stroke-width:2px
 ```
+
+---
+
+## 6. 分层职责一览
+
+| 层级 | 目录 | 职责 | 依赖方向 |
+|------|------|------|----------|
+| API 层 | `api/` | 接收 HTTP 请求，参数校验，调用 service | → services |
+| Service 层 | `services/` | 业务流程编排，事务边界 | → infrastructure, adapters |
+| 基础设施层 | `infrastructure/` | LLM、通知、缓存、加密等外部集成 | → core |
+| 适配层 | `adapters/` | 代码平台 API 封装，实现 core 接口 | → core |
+| 核心抽象层 | `core/` | ABC 接口定义，无外部依赖 | 无 |
+| 模型层 | `models/` | SQLAlchemy ORM + Pydantic 配置模型 | → 数据库 |
+| Schema 层 | `schemas/` | API 请求/响应 Schema | 无 |
