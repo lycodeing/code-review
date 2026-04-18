@@ -9,7 +9,8 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 
 from code_review.api.webhook import router as webhook_router
-from code_review.api.management import router as management_router
+from code_review.api.projects import router as projects_router
+from code_review.api.reviews import router as reviews_router
 from code_review.api.prompt_template import router as prompt_template_router, binding_router as prompt_binding_router
 from code_review.api.platform_config import router as platform_config_router
 from code_review.api.notification_config import router as notification_config_router
@@ -122,7 +123,8 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
 
     # 注册路由
     app.include_router(webhook_router)
-    app.include_router(management_router)
+    app.include_router(projects_router)
+    app.include_router(reviews_router)
     app.include_router(prompt_template_router)
     app.include_router(platform_config_router)
     app.include_router(notification_config_router)
