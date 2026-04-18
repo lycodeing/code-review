@@ -2,7 +2,9 @@ x-backend: &backend
   build:
     context: ../apps/backend
     dockerfile: Dockerfile
-  env_file: ../apps/backend/configs/.env
+  env_file:
+    - path: ../apps/backend/configs/.env
+      required: false
   environment:
     - CODE_REVIEW__DATABASE__URL=postgresql+asyncpg://postgres:postgres@db:5432/code_review
     - CODE_REVIEW__REDIS__URL=redis://redis:6379/0
