@@ -2,7 +2,7 @@
 name = "code-review"
 version = "1.0.0"
 description = "AI-powered code review service for GitHub, GitLab, and Gitee"
-readme = "README.md"
+readme = "../../README.md"
 requires-python = ">=3.11"
 license = {text = "MIT"}
 authors = [
