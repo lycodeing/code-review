@@ -200,6 +200,11 @@ class GitLabAdapter(BasePlatformAdapter):
         # event_id 使用 merge request 的全局 ID + action + updated_at 构造
         event_id = f"gl-{attrs.get('id', '')}-{action}-{attrs.get('updated_at', '')}"
 
+        # 提取 MR 基本信息
+        user = payload.get("user", {})
+        mr_author = user.get("username", "") or user.get("name", "")
+        mr_url = attrs.get("url", "")
+
         return WebhookEvent(
             platform=PlatformType.GITLAB,
             project_id=str(project.get("id", "")),
@@ -207,6 +212,9 @@ class GitLabAdapter(BasePlatformAdapter):
             mr_iid=str(attrs.get("iid", "")),
             action=mapped_action,
             event_id=event_id,
+            mr_title=attrs.get("title"),
+            mr_author=mr_author,
+            mr_url=mr_url,
             raw_payload=payload,
         )
 

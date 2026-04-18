@@ -5,13 +5,15 @@ from contextlib import asynccontextmanager
 
 import structlog
 from fastapi import FastAPI
+from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 
 from code_review.api.webhook import router as webhook_router
 from code_review.api.management import router as management_router
-from code_review.api.prompt_template import router as prompt_template_router
+from code_review.api.prompt_template import router as prompt_template_router, binding_router as prompt_binding_router
 from code_review.api.platform_config import router as platform_config_router
 from code_review.api.notification_config import router as notification_config_router
+from code_review.api.llm_config import router as llm_config_router, binding_router as llm_binding_router
 from code_review.infrastructure.celery_app import init_celery
 from code_review.infrastructure.notification_manager import NotificationManager
 from code_review.models.config import AppConfig
@@ -52,6 +54,13 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         """应用生命周期管理。"""
+        # 启动时检测弱默认密钥
+        if config.server.secret_key == "change-me-in-production":
+            logger.warning(
+                "⚠️  SERVER__SECRET_KEY 使用默认弱密钥，生产环境必须修改！"
+                " 请设置环境变量 CODE_REVIEW__SERVER__SECRET_KEY"
+            )
+
         logger.info("Starting code review service...")
 
         # 初始化数据库
@@ -117,6 +126,15 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     app.include_router(prompt_template_router)
     app.include_router(platform_config_router)
     app.include_router(notification_config_router)
+    app.include_router(llm_config_router)
+    app.include_router(llm_binding_router)
+    app.include_router(prompt_binding_router)
+
+    # 根路径重定向到 API 文档
+    @app.get("/", include_in_schema=False)
+    async def root():
+        """根路径重定向到 API 文档。"""
+        return RedirectResponse(url="/docs")
 
     return app
 

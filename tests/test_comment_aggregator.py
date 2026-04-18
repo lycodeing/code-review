@@ -65,7 +65,7 @@ class TestCommentAggregator:
 
     def test_no_merge_far_apart_lines(self):
         """行号相距过远不合并。"""
-        agg = CommentAggregator(adjacent_line_threshold=5)
+        agg = CommentAggregator()
         comments = [
             _make_comment(line_start=10, severity=Severity.WARNING, message="A"),
             _make_comment(line_start=50, severity=Severity.WARNING, message="B"),

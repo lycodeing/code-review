@@ -243,6 +243,11 @@ class GitHubAdapter(BasePlatformAdapter):
         action_map = {"synchronize": "synchronize", "reopened": "opened"}
         action = action_map.get(payload["action"], payload["action"])
 
+        # 提取 MR 基本信息
+        user = pr.get("user", {})
+        mr_author = user.get("login", "")
+        mr_url = pr.get("html_url", "") or pr.get("url", "")
+
         return WebhookEvent(
             platform=PlatformType.GITHUB,
             project_id=project_id,
@@ -250,6 +255,9 @@ class GitHubAdapter(BasePlatformAdapter):
             mr_iid=str(pr["number"]),
             action=action,
             event_id=event_id,
+            mr_title=pr.get("title"),
+            mr_author=mr_author,
+            mr_url=mr_url,
             raw_payload=payload,
         )
 

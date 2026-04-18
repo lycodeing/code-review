@@ -1,7 +1,5 @@
 """应用配置模型（Pydantic Settings）。"""
 
-from pathlib import Path
-from typing import Optional
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -37,6 +35,8 @@ class LLMConfig(BaseSettings):
     temperature: float = 0.3
     max_tokens: int = 4096
     timeout: int = 120
+    response_format: str = "auto"  # 响应格式：auto/json/anthropic_thinking/xml/plain_text
+    extra_params: dict | None = None  # 额外参数（如 custom_llm_provider）
 
 
 class FeishuConfig(BaseSettings):
@@ -88,13 +88,13 @@ class DatabaseConfig(BaseSettings):
 
 class RedisConfig(BaseSettings):
     """Redis 配置。"""
-    url: str = "redis://localhost:6379/0"
+    url: str = "redis://localhost:6380/0"
 
 
 class CeleryConfig(BaseSettings):
     """Celery 配置。"""
-    broker_url: str = "redis://localhost:6379/1"
-    result_backend: str = "redis://localhost:6379/2"
+    broker_url: str = "redis://localhost:6380/1"
+    result_backend: str = "redis://localhost:6380/2"
     task_serializer: str = "json"
     result_serializer: str = "json"
     timezone: str = "Asia/Shanghai"

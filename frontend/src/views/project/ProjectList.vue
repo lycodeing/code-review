@@ -40,12 +40,12 @@
       </div>
 
       <el-table :data="filteredData" v-loading="loading" stripe>
-        <el-table-column prop="name" label="项目名称" min-width="180">
+        <el-table-column prop="name" label="项目名称" min-width="130">
           <template #default="{ row }">
             <span class="link-text" @click="viewProject(row)">{{ row.name }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="platform" label="平台" width="120">
+        <el-table-column prop="platform" label="平台" width="140">
           <template #default="{ row }">
             <el-tag :color="platformColors[row.platform]" effect="dark" size="small" style="border: none">
               {{ platformNames[row.platform] || row.platform }}
@@ -61,13 +61,23 @@
             />
           </template>
         </el-table-column>
-        <el-table-column prop="created_at" label="创建时间" width="180">
+        <el-table-column prop="created_at" label="创建时间" width="240">
           <template #default="{ row }">{{ formatDateTime(row.created_at) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="160" fixed="right">
+        <el-table-column label="操作" width="300" fixed="right">
           <template #default="{ row }">
-            <el-button text type="primary" size="small" @click="openForm(row)">编辑</el-button>
-            <el-button text type="danger" size="small" @click="handleDelete(row)">删除</el-button>
+            <el-button text type="primary" size="small" @click="openForm(row)">
+              <el-icon><Edit /></el-icon> 编辑
+            </el-button>
+            <el-button text size="small" class="prompt-btn" @click="openPromptBindings(row)">
+              <el-icon><Tickets /></el-icon> 模板
+            </el-button>
+            <el-button text size="small" class="llm-btn" @click="openLLMBindings(row)">
+              <el-icon><Cpu /></el-icon> LLM
+            </el-button>
+            <el-button text type="danger" size="small" @click="handleDelete(row)">
+              <el-icon><Delete /></el-icon> 删除
+            </el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -93,6 +103,24 @@
       @close="formVisible = false"
       @saved="onSaved"
     />
+
+    <!-- LLM 绑定管理弹窗 -->
+    <ProjectLLMBindings
+      v-if="llmBindingsVisible"
+      :visible="llmBindingsVisible"
+      :project-id="currentProject?.id"
+      :project-name="currentProject?.name || ''"
+      @close="llmBindingsVisible = false"
+    />
+
+    <!-- Prompt 模板绑定管理弹窗 -->
+    <ProjectTemplateBindings
+      v-if="promptBindingsVisible"
+      :visible="promptBindingsVisible"
+      :project-id="currentProject?.id"
+      :project-name="currentProject?.name || ''"
+      @close="promptBindingsVisible = false"
+    />
   </div>
 </template>
 
@@ -100,13 +128,18 @@
 import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Search, Refresh, Edit, Delete, Cpu, Tickets } from '@element-plus/icons-vue'
 import { getProjects, deleteProject, updateProject } from '@/api/project'
 import { useTable } from '@/composables/useTable'
 import { formatDateTime, platformColors, platformNames } from '@/utils/format'
 import ProjectForm from './ProjectForm.vue'
+import ProjectLLMBindings from './ProjectLLMBindings.vue'
+import ProjectTemplateBindings from './ProjectTemplateBindings.vue'
 
 const router = useRouter()
 const formVisible = ref(false)
+const llmBindingsVisible = ref(false)
+const promptBindingsVisible = ref(false)
 const currentProject = ref(null)
 
 const filters = ref({ keyword: '', platform: '', enabled: '' })
@@ -136,6 +169,16 @@ function resetFilters() {
 function openForm(project = null) {
   currentProject.value = project
   formVisible.value = true
+}
+
+function openLLMBindings(project) {
+  currentProject.value = project
+  llmBindingsVisible.value = true
+}
+
+function openPromptBindings(project) {
+  currentProject.value = project
+  promptBindingsVisible.value = true
 }
 
 function viewProject(row) {
@@ -194,5 +237,15 @@ loadData()
   display: flex;
   justify-content: flex-end;
   margin-top: 16px;
+}
+
+.llm-btn {
+  color: #6366f1;
+  &:hover { color: #4f46e5; }
+}
+
+.prompt-btn {
+  color: #e6a23c;
+  &:hover { color: #cf8a22; }
 }
 </style>

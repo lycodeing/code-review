@@ -3,34 +3,35 @@
 协调整个评审流程：接收事件 → 去重 → 获取变更 → 调用 LLM → 聚合评论 → 发布 → 通知。
 """
 
-import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from fnmatch import fnmatch
 from uuid import UUID
 
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from code_review.adapters.factory import create_adapter
 from code_review.core.llm import ReviewResult
 from code_review.core.notification import NotificationPayload
 from code_review.core.platform import (
-    PlatformType,
-    WebhookEvent,
-    PublishComment,
     CommentPosition,
     FileChange,
+    PublishComment,
+    WebhookEvent,
 )
 from code_review.infrastructure.cache import event_dedup_cache
-from code_review.infrastructure.celery_app import async_task, get_celery
-from code_review.infrastructure.llm_reviewer import LiteLLMReviewer
+from code_review.infrastructure.celery_app import get_celery
+from code_review.infrastructure.langchain_reviewer import LangChainReviewer
 from code_review.infrastructure.notification_manager import NotificationManager
 from code_review.infrastructure.prompt_manager import PromptTemplateManager
-from code_review.models.config import AppConfig
-from code_review.models.db import Base, Project, ReviewTask, ReviewComment as ReviewCommentDB
+from code_review.models.config import AppConfig, LLMConfig
+from code_review.models.db import Base, Project, ReviewTask
+from code_review.models.db import ReviewComment as ReviewCommentDB
 from code_review.services.comment_aggregator import CommentAggregator
-from code_review.services.prompt_template_service import seed_default_templates
+from code_review.services.llm_config_service import LLMConfigService
+from code_review.services.platform_config_service import PlatformConfigService
+from code_review.services.prompt_template_service import PromptTemplateService, seed_default_templates
 
 logger = logging.getLogger(__name__)
 
@@ -85,8 +86,6 @@ class ReviewOrchestrator:
 
     async def _get_platform_config(self, platform: str):
         """获取平台配置（DB 优先，env 降级）。"""
-        from code_review.services.platform_config_service import PlatformConfigService
-
         # 获取 env 降级值
         env_fallbacks = {
             "github": (self._config.github.token, self._config.github.api_url, self._config.github.webhook_secret),
@@ -116,17 +115,14 @@ class ReviewOrchestrator:
     async def process_webhook_event(self, event: WebhookEvent) -> ReviewTask | None:
         """处理 Webhook 事件入口。
 
-        1. 去重检查
-        2. 查找项目配置
-        3. 创建评审任务
-        4. 分发到 Celery 异步执行
+        1. 查找项目配置
+        2. 创建评审任务
+        3. 分发到 Celery 异步执行
+
+        注意：去重检查已在 webhook 端点层完成，此处不再重复检查。
         """
         self._ensure_engine()
-        # 幂等去重：基于 event_id
-        if event_dedup_cache.exists(event.event_id):
-            logger.info("Duplicate event ignored: %s", event.event_id)
-            return None
-
+        # 去重缓存设置（由 webhook 端点调用前设置，这里确保设置）
         event_dedup_cache.set(event.event_id, True, ttl=3600)
 
         async with self._session_factory() as session:
@@ -151,6 +147,9 @@ class ReviewOrchestrator:
                 mr_iid=event.mr_iid,
                 event_id=event.event_id,
                 trigger_action=event.action,
+                mr_title=event.mr_title,
+                mr_author=event.mr_author,
+                mr_url=event.mr_url,
                 status=ReviewTask.Status.PENDING,
             )
             session.add(task)
@@ -190,7 +189,7 @@ class ReviewOrchestrator:
             try:
                 # 更新状态为评审中
                 task.status = ReviewTask.Status.IN_PROGRESS
-                task.started_at = datetime.utcnow()
+                task.started_at = datetime.now(tz=timezone.utc)
                 await session.commit()
 
                 # 获取项目配置
@@ -233,7 +232,7 @@ class ReviewOrchestrator:
                 if not filtered_changes:
                     task.status = ReviewTask.Status.COMPLETED
                     task.summary = "No reviewable files found after filtering."
-                    task.completed_at = datetime.utcnow()
+                    task.completed_at = datetime.now(tz=timezone.utc)
                     await session.commit()
                     return
 
@@ -251,18 +250,60 @@ class ReviewOrchestrator:
                     if self._prompt_manager.detect_language(c.path) == l
                 )) if languages else "default"
 
-                # 优先使用项目配置中指定的模板名称，否则按分类自动匹配
-                project_template_name = (
-                    (project.config or {}).get("prompt_template_name")
-                )
-                prompt = await self._prompt_manager.get_template(
-                    session=session,
-                    language=main_language,
-                    template_name=project_template_name,
-                )
+                # 优先级：项目绑定模板 > 项目 config 指定名称 > 按分类自动匹配
+                prompt = None
+                prompt_svc = PromptTemplateService(session)
+                # 1. 尝试从项目绑定获取模板
+                prompt = await prompt_svc.get_template_for_project(task.project_id)
+                if prompt:
+                    logger.info(f"使用项目绑定的模板: {prompt.name}")
+                else:
+                    # 2. 尝试从项目 config 中指定的模板名称
+                    project_template_name = (
+                        (project.config or {}).get("prompt_template_name")
+                    )
+                    # 3. 按分类自动匹配
+                    prompt = await self._prompt_manager.get_template(
+                        session=session,
+                        language=main_language,
+                        template_name=project_template_name,
+                    )
+
+                # 获取项目的 LLM 配置
+                llm_config_service = LLMConfigService(session, self._secret_key)
+                llm_config = await llm_config_service.get_llm_config_for_project(task.project_id)
+
+                logger.debug("项目 %s 的 LLM 配置: %s", task.project_id, llm_config)
+
+                # 构造 LLM 配置
+                if llm_config:
+                    # 使用数据库配置
+                    api_key = await llm_config_service.decrypt_api_key(llm_config.api_key)
+                    logger.debug("数据库配置: provider=%r, model_name=%r", llm_config.provider, llm_config.model_name)
+
+                    model = llm_config.model_name
+                    logger.debug("最终模型: %r", model)
+                    # 创建 LLMConfig 对象（包含 response_format）
+                    llm_settings = LLMConfig(
+                        model=model,
+                        api_key=api_key,
+                        api_base=llm_config.api_base or "",
+                        temperature=llm_config.extra_params.get("temperature", 0.3) if llm_config.extra_params else 0.3,
+                        max_tokens=llm_config.extra_params.get("max_tokens", 4096) if llm_config.extra_params else 4096,
+                        timeout=llm_config.extra_params.get("timeout", 120) if llm_config.extra_params else 120,
+                        response_format=llm_config.response_format or "auto",
+                        extra_params=llm_config.extra_params,
+                    )
+                    logger.debug("LLMConfig.model=%r, response_format=%r", llm_settings.model, llm_settings.response_format)
+                    task.model_name = model
+                    logger.info("使用数据库 LLM 配置: %s", task.model_name)
+                else:
+                    # 降级到环境变量配置
+                    llm_settings = self._config.llm
+                    logger.info("使用环境变量 LLM 配置, model=%r", llm_settings.model)
 
                 # 调用 LLM 评审
-                reviewer = LiteLLMReviewer(self._config.llm)
+                reviewer = LangChainReviewer(llm_settings)
                 result: ReviewResult = await reviewer.review(
                     diff=combined_diff,
                     files=filtered_changes,
@@ -327,7 +368,7 @@ class ReviewOrchestrator:
                 await self._notification_manager.notify_all(notification_payload)
 
                 task.status = ReviewTask.Status.COMPLETED
-                task.completed_at = datetime.utcnow()
+                task.completed_at = datetime.now(tz=timezone.utc)
                 await session.commit()
 
                 logger.info(
@@ -339,13 +380,18 @@ class ReviewOrchestrator:
                 logger.error("Review failed for task %s: %s", task_id, e, exc_info=True)
                 task.status = ReviewTask.Status.FAILED
                 task.error_message = str(e)
-                task.completed_at = datetime.utcnow()
+                task.completed_at = datetime.now(tz=timezone.utc)
                 await session.commit()
 
     async def _find_project(
         self, session: AsyncSession, event: WebhookEvent
     ) -> Project | None:
         """根据事件查找匹配的项目配置。"""
+        logger.debug(
+            "查找项目: platform=%s, project_id=%r",
+            event.platform.value,
+            event.project_id,
+        )
         stmt = select(Project).where(
             Project.platform == event.platform.value,
             Project.platform_project_id == event.project_id,

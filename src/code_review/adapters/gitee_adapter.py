@@ -77,10 +77,9 @@ class GiteeAdapter(BasePlatformAdapter):
 
     async def get_mr_changes(self, project_id: str, mr_iid: str) -> list[FileChange]:
         owner, repo = self._parse_project_id(project_id)
-        data = await self._request(
-            "GET",
+        data = await self._get_all_pages(
             f"/repos/{owner}/{repo}/pulls/{mr_iid}/files",
-            params=self._with_token({"page": 1, "per_page": 100}),
+            params=self._with_token(),
         )
         changes = []
         for f in data:
@@ -261,7 +260,14 @@ class GiteeAdapter(BasePlatformAdapter):
         project_id = repo.get("full_name", "") or repo.get("path_with_namespace", "")
 
         action_map = {"open": "opened", "update": "updated", "close": "closed", "merge": "merged"}
-        event_id = f"gitee-{pr.get('id', '')}-{action}-{payload.get('updated_at', '')}"
+        # Gitee 的 updated_at 在 pull_request 对象内
+        updated_at = pr.get("updated_at", "") or pr.get("created_at", "")
+        event_id = f"gitee-{pr.get('id', '')}-{action}-{updated_at}"
+
+        # 提取 MR 基本信息
+        user = pr.get("user", {})
+        mr_author = user.get("login", "") or user.get("name", "")
+        mr_url = pr.get("html_url", "") or pr.get("url", "")
 
         return WebhookEvent(
             platform=PlatformType.GITEE,
@@ -270,6 +276,9 @@ class GiteeAdapter(BasePlatformAdapter):
             mr_iid=str(pr.get("number", "")),
             action=action_map.get(action, action),
             event_id=event_id,
+            mr_title=pr.get("title"),
+            mr_author=mr_author,
+            mr_url=mr_url,
             raw_payload=payload,
         )
 

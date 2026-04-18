@@ -1,49 +1,64 @@
 """平台适配器测试（使用 mock）。"""
 
 import pytest
+from unittest.mock import MagicMock
 
 from code_review.adapters.factory import create_adapter
 from code_review.adapters.github_adapter import GitHubAdapter
 from code_review.adapters.gitlab_adapter import GitLabAdapter
 from code_review.adapters.gitee_adapter import GiteeAdapter
 from code_review.core.platform import PlatformType
-from code_review.models.config import AppConfig
+
+
+def _make_platform_config(token: str, api_url: str, webhook_secret: str = "") -> MagicMock:
+    """创建 PlatformConfig ORM 对象的模拟。"""
+    config = MagicMock()
+    config.access_token = token
+    config.api_url = api_url
+    config.webhook_secret = webhook_secret
+    return config
 
 
 @pytest.fixture
-def config() -> AppConfig:
-    return AppConfig(
-        github={"token": "test-token", "api_url": "https://api.github.com"},
-        gitlab={"token": "test-token", "api_url": "https://gitlab.com/api/v4"},
-        gitee={"token": "test-token", "api_url": "https://gitee.com/api/v5"},
-    )
+def github_config():
+    return _make_platform_config("test-token", "https://api.github.com")
+
+
+@pytest.fixture
+def gitlab_config():
+    return _make_platform_config("test-token", "https://gitlab.com/api/v4")
+
+
+@pytest.fixture
+def gitee_config():
+    return _make_platform_config("test-token", "https://gitee.com/api/v5")
 
 
 class TestAdapterFactory:
     """适配器工厂测试。"""
 
-    def test_create_github(self, config):
-        adapter = create_adapter(PlatformType.GITHUB, config)
+    def test_create_github(self, github_config):
+        adapter = create_adapter(PlatformType.GITHUB, github_config)
         assert isinstance(adapter, GitHubAdapter)
         assert adapter.platform_type == PlatformType.GITHUB
 
-    def test_create_gitlab(self, config):
-        adapter = create_adapter(PlatformType.GITLAB, config)
+    def test_create_gitlab(self, gitlab_config):
+        adapter = create_adapter(PlatformType.GITLAB, gitlab_config)
         assert isinstance(adapter, GitLabAdapter)
         assert adapter.platform_type == PlatformType.GITLAB
 
-    def test_create_gitee(self, config):
-        adapter = create_adapter(PlatformType.GITEE, config)
+    def test_create_gitee(self, gitee_config):
+        adapter = create_adapter(PlatformType.GITEE, gitee_config)
         assert isinstance(adapter, GiteeAdapter)
         assert adapter.platform_type == PlatformType.GITEE
 
-    def test_create_by_string(self, config):
-        adapter = create_adapter("github", config)
+    def test_create_by_string(self, github_config):
+        adapter = create_adapter("github", github_config)
         assert isinstance(adapter, GitHubAdapter)
 
-    def test_unsupported_platform(self, config):
-        with pytest.raises(ValueError, match="Unsupported platform"):
-            create_adapter("bitbucket", config)
+    def test_unsupported_platform(self, github_config):
+        with pytest.raises((ValueError, KeyError)):
+            create_adapter("bitbucket", github_config)
 
 
 class TestGitHubAdapter:

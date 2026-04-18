@@ -4,7 +4,7 @@ import logging
 from datetime import datetime
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
 from code_review.models.db import PromptTemplate
@@ -13,6 +13,9 @@ from code_review.services.prompt_template_service import PromptTemplateService
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/prompt-templates", tags=["prompt-templates"])
+
+# 项目绑定路由
+binding_router = APIRouter(prefix="/api/v1/projects/{project_id}/prompt-bindings", tags=["prompt-bindings"])
 
 
 # ---- 请求/响应模型 ----
@@ -44,15 +47,41 @@ class TemplateResponse(BaseModel):
 
     model_config = {"from_attributes": True}
 
-    model_config = {"from_attributes": True}
-
 
 class TemplateListResponse(BaseModel):
     items: list[TemplateResponse]
     total: int
 
 
-# ---- 端点 ----
+class PromptBindingCreate(BaseModel):
+    """创建项目-模板绑定请求。"""
+    template_id: UUID
+    is_default: bool = Field(default=False, description="是否设为默认")
+    priority: int = Field(default=0, ge=0, le=100, description="优先级（0-100）")
+
+
+class PromptBindingUpdate(BaseModel):
+    """更新绑定请求。"""
+    is_default: bool | None = None
+    priority: int | None = Field(None, ge=0, le=100)
+    enabled: bool | None = None
+
+
+class PromptBindingResponse(BaseModel):
+    """绑定响应。"""
+    id: UUID
+    project_id: UUID
+    template_id: UUID
+    template: TemplateResponse | None = None
+    is_default: bool
+    priority: int
+    enabled: bool
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+# ---- 模板 CRUD 端点 ----
 
 @router.post("", response_model=TemplateResponse, status_code=201)
 async def create_template(body: TemplateCreate, request: Request):
@@ -150,3 +179,148 @@ async def delete_template(template_id: str, request: Request):
         deleted = await svc.delete(UUID(template_id))
         if not deleted:
             raise HTTPException(status_code=404, detail="Template not found")
+
+
+# ---- 项目绑定管理端点 ----
+
+@binding_router.get("", response_model=list[PromptBindingResponse])
+async def list_project_bindings(
+    request: Request,
+    project_id: UUID,
+):
+    """获取项目的 Prompt 模板绑定列表。"""
+    session_factory = request.app.state.session_factory
+    async with session_factory() as session:
+        svc = PromptTemplateService(session)
+        bindings = await svc.list_bindings(project_id)
+
+        result = []
+        for binding in bindings:
+            tpl = await svc.get_by_id(binding.template_id)
+            result.append(
+                PromptBindingResponse(
+                    id=binding.id,
+                    project_id=binding.project_id,
+                    template_id=binding.template_id,
+                    template=TemplateResponse.model_validate(tpl) if tpl else None,
+                    is_default=binding.is_default,
+                    priority=binding.priority,
+                    enabled=binding.enabled,
+                    created_at=binding.created_at,
+                )
+            )
+        return result
+
+
+@binding_router.post("", response_model=PromptBindingResponse, status_code=status.HTTP_201_CREATED)
+async def create_binding(
+    request: Request,
+    project_id: UUID,
+    data: PromptBindingCreate,
+):
+    """为项目添加 Prompt 模板绑定。"""
+    session_factory = request.app.state.session_factory
+    async with session_factory() as session:
+        svc = PromptTemplateService(session)
+        try:
+            binding = await svc.create_binding(
+                project_id=project_id,
+                template_id=data.template_id,
+                is_default=data.is_default,
+                priority=data.priority,
+            )
+            await session.commit()
+            await session.refresh(binding)
+
+            tpl = await svc.get_by_id(binding.template_id)
+            return PromptBindingResponse(
+                id=binding.id,
+                project_id=binding.project_id,
+                template_id=binding.template_id,
+                template=TemplateResponse.model_validate(tpl) if tpl else None,
+                is_default=binding.is_default,
+                priority=binding.priority,
+                enabled=binding.enabled,
+                created_at=binding.created_at,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@binding_router.put("/{binding_id}", response_model=PromptBindingResponse)
+async def update_binding(
+    request: Request,
+    project_id: UUID,
+    binding_id: UUID,
+    data: PromptBindingUpdate,
+):
+    """更新绑定配置。"""
+    session_factory = request.app.state.session_factory
+    async with session_factory() as session:
+        svc = PromptTemplateService(session)
+        try:
+            update_data = {k: v for k, v in data.model_dump().items() if v is not None}
+            binding = await svc.update_binding(binding_id, **update_data)
+            await session.commit()
+            await session.refresh(binding)
+
+            tpl = await svc.get_by_id(binding.template_id)
+            return PromptBindingResponse(
+                id=binding.id,
+                project_id=binding.project_id,
+                template_id=binding.template_id,
+                template=TemplateResponse.model_validate(tpl) if tpl else None,
+                is_default=binding.is_default,
+                priority=binding.priority,
+                enabled=binding.enabled,
+                created_at=binding.created_at,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+
+@binding_router.delete("/{binding_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_binding(
+    request: Request,
+    project_id: UUID,
+    binding_id: UUID,
+):
+    """删除绑定。"""
+    session_factory = request.app.state.session_factory
+    async with session_factory() as session:
+        svc = PromptTemplateService(session)
+        try:
+            await svc.delete_binding(binding_id)
+            await session.commit()
+        except ValueError as e:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+
+@binding_router.patch("/{binding_id}/set-default", response_model=PromptBindingResponse)
+async def set_default_binding(
+    request: Request,
+    project_id: UUID,
+    binding_id: UUID,
+):
+    """设置默认模板。"""
+    session_factory = request.app.state.session_factory
+    async with session_factory() as session:
+        svc = PromptTemplateService(session)
+        try:
+            binding = await svc.set_default_binding(binding_id)
+            await session.commit()
+            await session.refresh(binding)
+
+            tpl = await svc.get_by_id(binding.template_id)
+            return PromptBindingResponse(
+                id=binding.id,
+                project_id=binding.project_id,
+                template_id=binding.template_id,
+                template=TemplateResponse.model_validate(tpl) if tpl else None,
+                is_default=binding.is_default,
+                priority=binding.priority,
+                enabled=binding.enabled,
+                created_at=binding.created_at,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))

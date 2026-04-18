@@ -71,6 +71,8 @@ services:
       - pgdata:/var/lib/postgresql/data
       - ../configs/migrations/001_init.sql:/docker-entrypoint-initdb.d/001_init.sql
       - ../configs/migrations/002_prompt_templates.sql:/docker-entrypoint-initdb.d/002_prompt_templates.sql
+      - ../configs/migrations/003_platform_and_notification_configs.sql:/docker-entrypoint-initdb.d/003_platform_and_notification_configs.sql
+      - ../configs/migrations/004_add_response_format.sql:/docker-entrypoint-initdb.d/004_add_response_format.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s

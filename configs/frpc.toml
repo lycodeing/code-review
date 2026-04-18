@@ -9,8 +9,8 @@ auth.token = "lycodeing9527"
 
 # HTTP 隧道：把 lycodeing.cn 的请求转发到本地 8000
 [[proxies]]
-name = "code-review-web"
+name = "code-review-web2"
 type = "http"
 localIP = "127.0.0.1"
 localPort = 8000
-customDomains = ["cr.lycodeing.cn"]
+customDomains = ["api.lycodeing.cn"]

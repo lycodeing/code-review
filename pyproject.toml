@@ -25,7 +25,9 @@ dependencies = [
     "httpx>=0.28.0",
 
     # LLM
-    "litellm>=1.55.0",
+    "langchain-openai>=0.2.0",
+    "langchain-community>=0.3.0",
+    "langchain-core>=0.3.0",
 
     # 任务队列
     "celery[redis]>=5.4.0",

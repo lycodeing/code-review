@@ -1,13 +1,17 @@
 """基于 LiteLLM 的大模型评审器实现。"""
 
-import json
 import logging
 import time
 
 import litellm
 
-from code_review.core.llm import LLMReviewer, ReviewComment, ReviewResult, Severity
+from code_review.core.llm import LLMReviewer, ReviewComment, ReviewResult
 from code_review.core.platform import FileChange
+from code_review.infrastructure.response_parser import (
+    MultiFormatResponseParser,
+    ParsedReview,
+    ResponseFormat,
+)
 from code_review.models.config import LLMConfig
 
 logger = logging.getLogger(__name__)
@@ -18,10 +22,17 @@ class LiteLLMReviewer(LLMReviewer):
 
     支持 OpenAI / Anthropic / 通义千问 / DeepSeek / 本地模型等 100+ 提供商。
     只需修改 config.llm.model 和 config.llm.api_base 即可切换。
+
+    多格式支持：
+    - OpenAI 格式（标准 JSON）
+    - Anthropic 格式（包含 thinking blocks、reasoning_content）
+    - XML 格式
+    - 纯文本格式（带正则提取）
     """
 
     def __init__(self, config: LLMConfig):
         self._config = config
+        self._parser = MultiFormatResponseParser()
 
     async def review(
         self,
@@ -33,6 +44,11 @@ class LiteLLMReviewer(LLMReviewer):
         total_tokens = 0
         comments: list[ReviewComment] = []
         summary = ""
+
+        # 调试日志
+        logger.info("=== LiteLLMReviewer.review 被调用 ===")
+        logger.info(f"LLMConfig.model: {self._config.model!r}")
+        logger.info(f"LLMConfig.api_base: {self._config.api_base!r}")
 
         # 构建文件上下文
         files_context = self._build_files_context(files)
@@ -55,29 +71,73 @@ class LiteLLMReviewer(LLMReviewer):
                     },
                     {"role": "user", "content": full_prompt},
                 ],
-                "temperature": self._config.temperature,
                 "max_tokens": self._config.max_tokens,
                 "timeout": self._config.timeout,
             }
+
+            # 某些模型（如 AWS Bedrock 的某些模型）不支持 temperature 参数
+            # 只在模型支持时添加 temperature
+            model_lower = self._config.model.lower()
+            skip_temperature_models = [
+                "bedrock", "amazon.titan", "anthropic.claude-3-5-sonnet",
+                "us.anthropic.claude", "eu.anthropic.claude"
+            ]
+            should_skip_temp = any(model in model_lower for model in skip_temperature_models)
+
+            if not should_skip_temp:
+                kwargs["temperature"] = self._config.temperature
+
             if self._config.api_key:
                 kwargs["api_key"] = self._config.api_key
             if self._config.api_base:
-                kwargs["api_base"] = self._config.api_base
+                # 使用 base_url 而不是 api_base（LiteLLM 的自定义端点参数）
+                kwargs["base_url"] = self._config.api_base
+
+            # 支持强制指定提供商（避免 LiteLLM 自动路由）
+            if self._config.extra_params and "custom_llm_provider" in self._config.extra_params:
+                kwargs["custom_llm_provider"] = self._config.extra_params["custom_llm_provider"]
 
             response = await litellm.acompletion(**kwargs)
 
             content = response.choices[0].message.content or ""
             total_tokens = response.usage.total_tokens if response.usage else 0
 
-            # 解析模型返回
-            comments, summary = self._parse_response(content)
+            # 调试日志：记录 LLM 原始响应
+            logger.info("=== LLM 原始响应 ===")
+            logger.info(f"Token 使用量: {total_tokens}")
+            logger.info(f"响应内容（前500字符）: {content[:500]}")
+            logger.info(f"响应长度: {len(content)} 字符")
 
-        except json.JSONDecodeError as e:
-            logger.error("Failed to parse LLM response as JSON: %s", e)
-            summary = "LLM 返回格式异常，无法解析评审意见。"
+            # 使用多格式解析器解析模型返回
+            # 将配置的 response_format 字符串转换为 ResponseFormat 枚举
+            try:
+                format_hint = ResponseFormat(self._config.response_format or "auto")
+            except ValueError:
+                logger.warning(f"无效的响应格式配置: {self._config.response_format}，使用自动检测")
+                format_hint = ResponseFormat.AUTO
+
+            parsed_result: ParsedReview = self._parser.parse(content, format_hint=format_hint)
+            comments = parsed_result.comments
+            summary = parsed_result.summary
+
+            # 记录解析详情
+            logger.info(
+                f"解析完成: 配置格式={self._config.response_format}, "
+                f"实际使用格式={parsed_result.format_used.value}, "
+                f"评论数={len(comments)}, "
+                f"摘要长度={len(summary)}"
+            )
+            for warning in parsed_result.warnings:
+                logger.warning(f"解析警告: {warning}")
+
+        except ValueError as e:
+            # 多格式解析失败
+            logger.error("多格式解析器失败: %s", e)
+            raise
         except Exception as e:
+            # LLM 调用失败（网络错误、认证错误等），重新抛出异常
             logger.error("LLM review failed: %s", e)
-            summary = f"LLM 调用失败: {e}"
+            raise
 
         elapsed = time.time() - start_time
         return ReviewResult(
@@ -99,53 +159,6 @@ class LiteLLMReviewer(LLMReviewer):
                 f"{status_icon} {f.path} (+{f.added}/-{f.deleted})"
             )
         return "\n".join(lines)
-
-    def _parse_response(self, content: str) -> tuple[list[ReviewComment], str]:
-        """解析 LLM 返回的 JSON 格式评审意见。
-
-        期望的 JSON 格式：
-        {
-            "summary": "整体评审摘要",
-            "comments": [
-                {
-                    "file_path": "src/foo.py",
-                    "line_start": 10,
-                    "line_end": 15,
-                    "severity": "warning",
-                    "message": "评审意见",
-                    "suggestion": "修复建议"
-                }
-            ]
-        }
-        """
-        # 尝试提取 JSON 块（兼容 markdown 代码块包裹）
-        json_str = content
-        if "```json" in content:
-            json_str = content.split("```json", 1)[1].split("```", 1)[0]
-        elif "```" in content:
-            json_str = content.split("```", 1)[1].split("```", 1)[0]
-
-        data = json.loads(json_str.strip())
-        summary = data.get("summary", "")
-
-        comments = []
-        for item in data.get("comments", []):
-            severity_str = item.get("severity", "suggestion").lower()
-            try:
-                severity = Severity(severity_str)
-            except ValueError:
-                severity = Severity.SUGGESTION
-
-            comments.append(ReviewComment(
-                file_path=item.get("file_path", ""),
-                line_start=item.get("line_start", 1),
-                line_end=item.get("line_end", item.get("line_start", 1)),
-                severity=severity,
-                message=item.get("message", ""),
-                suggestion=item.get("suggestion", ""),
-            ))
-
-        return comments, summary
 
     async def health_check(self) -> bool:
         try:

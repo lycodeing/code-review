@@ -10,7 +10,7 @@ from uuid import UUID
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from code_review.models.db import PromptTemplate
+from code_review.models.db import PromptTemplate, ProjectPromptBinding
 
 logger = logging.getLogger(__name__)
 
@@ -286,4 +286,187 @@ class PromptTemplateService:
             tpl = result.scalar_one_or_none()
             if tpl is not None:
                 return tpl
+        return None
+
+    # ========== 项目绑定管理 ==========
+
+    async def list_bindings(self, project_id) -> list[ProjectPromptBinding]:
+        """列出项目的 Prompt 模板绑定。"""
+        from uuid import UUID
+        if isinstance(project_id, str):
+            project_id = UUID(project_id)
+
+        stmt = (
+            select(ProjectPromptBinding)
+            .where(ProjectPromptBinding.project_id == project_id)
+            .order_by(ProjectPromptBinding.priority.desc(), ProjectPromptBinding.created_at)
+        )
+        result = await self._session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def get_binding(self, binding_id) -> ProjectPromptBinding | None:
+        """获取绑定详情。"""
+        from uuid import UUID
+        if isinstance(binding_id, str):
+            binding_id = UUID(binding_id)
+        return await self._session.get(ProjectPromptBinding, binding_id)
+
+    async def create_binding(
+        self,
+        project_id,
+        template_id,
+        is_default: bool = False,
+        priority: int = 0,
+    ) -> ProjectPromptBinding:
+        """创建项目-Prompt 模板绑定。"""
+        from uuid import UUID
+        if isinstance(project_id, str):
+            project_id = UUID(project_id)
+        if isinstance(template_id, str):
+            template_id = UUID(template_id)
+
+        # 检查模板是否存在
+        tpl = await self._session.get(PromptTemplate, template_id)
+        if not tpl:
+            raise ValueError(f"模板 {template_id} 不存在")
+
+        # 如果设置为默认，清除其他默认标记
+        if is_default:
+            stmt = select(ProjectPromptBinding).where(
+                ProjectPromptBinding.project_id == project_id,
+                ProjectPromptBinding.is_default == True,
+            )
+            result = await self._session.execute(stmt)
+            for binding in result.scalars().all():
+                binding.is_default = False
+
+        binding = ProjectPromptBinding(
+            project_id=project_id,
+            template_id=template_id,
+            is_default=is_default,
+            priority=priority,
+        )
+        self._session.add(binding)
+        await self._session.flush()
+        await self._session.refresh(binding)
+        return binding
+
+    async def update_binding(
+        self,
+        binding_id,
+        is_default: bool | None = None,
+        priority: int | None = None,
+        enabled: bool | None = None,
+    ) -> ProjectPromptBinding:
+        """更新绑定。"""
+        from uuid import UUID
+        if isinstance(binding_id, str):
+            binding_id = UUID(binding_id)
+
+        binding = await self._session.get(ProjectPromptBinding, binding_id)
+        if not binding:
+            raise ValueError(f"绑定 {binding_id} 不存在")
+
+        if is_default is not None:
+            if is_default:
+                stmt = select(ProjectPromptBinding).where(
+                    ProjectPromptBinding.project_id == binding.project_id,
+                    ProjectPromptBinding.is_default == True,
+                    ProjectPromptBinding.id != binding_id,
+                )
+                result = await self._session.execute(stmt)
+                for b in result.scalars().all():
+                    b.is_default = False
+            binding.is_default = is_default
+
+        if priority is not None:
+            binding.priority = priority
+        if enabled is not None:
+            binding.enabled = enabled
+
+        await self._session.flush()
+        await self._session.refresh(binding)
+        return binding
+
+    async def delete_binding(self, binding_id) -> None:
+        """删除绑定。"""
+        from uuid import UUID
+        if isinstance(binding_id, str):
+            binding_id = UUID(binding_id)
+
+        binding = await self._session.get(ProjectPromptBinding, binding_id)
+        if not binding:
+            raise ValueError(f"绑定 {binding_id} 不存在")
+        await self._session.delete(binding)
+
+    async def set_default_binding(self, binding_id) -> ProjectPromptBinding:
+        """设置默认绑定。"""
+        from uuid import UUID
+        if isinstance(binding_id, str):
+            binding_id = UUID(binding_id)
+
+        binding = await self._session.get(ProjectPromptBinding, binding_id)
+        if not binding:
+            raise ValueError(f"绑定 {binding_id} 不存在")
+
+        # 清除同项目其他默认标记
+        stmt = select(ProjectPromptBinding).where(
+            ProjectPromptBinding.project_id == binding.project_id,
+            ProjectPromptBinding.is_default == True,
+            ProjectPromptBinding.id != binding_id,
+        )
+        result = await self._session.execute(stmt)
+        for b in result.scalars().all():
+            b.is_default = False
+
+        binding.is_default = True
+        await self._session.flush()
+        await self._session.refresh(binding)
+        return binding
+
+    async def get_template_for_project(self, project_id) -> PromptTemplate | None:
+        """获取项目的 Prompt 模板。
+
+        选择优先级：
+        1. 项目的默认绑定（is_default=True）
+        2. 项目的最高优先级绑定（priority DESC）
+        3. None（返回 None，由调用方按分类自动匹配）
+        """
+        from uuid import UUID
+        if isinstance(project_id, str):
+            project_id = UUID(project_id)
+
+        # 1. 查找项目默认绑定
+        stmt = (
+            select(PromptTemplate)
+            .join(ProjectPromptBinding)
+            .where(
+                ProjectPromptBinding.project_id == project_id,
+                ProjectPromptBinding.is_default == True,
+                ProjectPromptBinding.enabled == True,
+                PromptTemplate.enabled == 1,
+            )
+        )
+        result = await self._session.execute(stmt)
+        tpl = result.scalar_one_or_none()
+        if tpl:
+            return tpl
+
+        # 2. 查找项目最高优先级绑定
+        stmt = (
+            select(PromptTemplate)
+            .join(ProjectPromptBinding)
+            .where(
+                ProjectPromptBinding.project_id == project_id,
+                ProjectPromptBinding.enabled == True,
+                PromptTemplate.enabled == 1,
+            )
+            .order_by(ProjectPromptBinding.priority.desc())
+            .limit(1)
+        )
+        result = await self._session.execute(stmt)
+        tpl = result.scalar_one_or_none()
+        if tpl:
+            return tpl
+
         return None

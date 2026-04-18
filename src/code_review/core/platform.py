@@ -87,6 +87,9 @@ class WebhookEvent:
     mr_iid: str
     action: str  # opened / synchronize / updated / closed / merged
     event_id: str  # 用于去重
+    mr_title: str | None = None  # MR 标题
+    mr_author: str | None = None  # MR 作者
+    mr_url: str | None = None  # MR URL
     raw_payload: dict = field(default_factory=dict)
 
 
