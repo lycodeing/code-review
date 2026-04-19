@@ -129,14 +129,13 @@ class NotificationTemplateService:
         project_id: UUID,
         notification_id: UUID,
     ) -> NotificationTemplate | None:
-        """按三级优先级解析最终使用的模板。
+        """解析模板：仅使用数据库中用户显式配置的绑定。
 
         优先级（从高到低）：
         1. project_notification_template_bindings（项目 + 渠道 → 模板）
-        2. notification_configs.template_id（渠道默认模板）
-        3. notification_templates 中 is_default=True 且 channel 匹配（内置兜底）
+        2. notification_configs.template_id（渠道级默认模板）
 
-        若三级均无命中，返回 None（调用方使用硬编码兜底逻辑）。
+        两级均未配置时返回 None，由调用方决定是否报错。
         """
         # --- 第一优先级：项目级绑定 ---
         stmt = (
@@ -153,22 +152,15 @@ class NotificationTemplateService:
         if binding is not None and binding.template_id is not None:
             tpl = await self._session.get(NotificationTemplate, binding.template_id)
             if tpl is not None and tpl.enabled:
-                logger.debug("使用项目级绑定模板: %s（项目=%s, 渠道=%s）", tpl.name, project_id, notification_id)
+                logger.info("使用项目级绑定模板: %s", tpl.name)
                 return tpl
 
-        # --- 第二优先级：渠道默认模板 ---
+        # --- 第二优先级：渠道级默认模板 ---
         nc = await self._session.get(NotificationConfig, notification_id)
         if nc is not None and nc.template_id is not None:
             tpl = await self._session.get(NotificationTemplate, nc.template_id)
             if tpl is not None and tpl.enabled:
-                logger.debug("使用渠道默认模板: %s（渠道=%s）", tpl.name, nc.channel)
-                return tpl
-
-        # --- 第三优先级：内置 is_default 模板 ---
-        if nc is not None:
-            tpl = await self.get_default(nc.channel)
-            if tpl is not None:
-                logger.debug("使用内置默认模板: %s（渠道=%s）", tpl.name, nc.channel)
+                logger.info("使用渠道级默认模板: %s", tpl.name)
                 return tpl
 
         return None

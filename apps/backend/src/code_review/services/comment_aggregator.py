@@ -191,22 +191,19 @@ class CommentAggregator:
         comments: list[ReviewComment],
         severity_counts: dict[str, int],
     ) -> str:
-        """构建评审摘要文本。"""
-        lines = [
-            f"**共 {len(comments)} 条评审意见：**\n",
-            f"| 级别 | 数量 |",
-            f"|------|------|",
-            f"| 🔴 严重（Critical） | {severity_counts.get('critical', 0)} |",
-            f"| 🟡 警告（Warning） | {severity_counts.get('warning', 0)} |",
-            f"| 🔵 建议（Suggestion） | {severity_counts.get('suggestion', 0)} |",
-            f"| ℹ️ 信息（Info） | {severity_counts.get('info', 0)} |",
-        ]
+        """构建评审摘要文本（纯文本，兼容钉钉/飞书等即时通知渠道）。"""
+        c = severity_counts.get('critical', 0)
+        w = severity_counts.get('warning', 0)
+        s = severity_counts.get('suggestion', 0)
+        i = severity_counts.get('info', 0)
+        summary = f"共 {len(comments)} 条评审意见：🔴 严重 {c} · 🟡 警告 {w} · 🔵 建议 {s} · ℹ️ 信息 {i}"
 
-        # 列出所有严重问题
-        criticals = [c for c in comments if c.severity == Severity.CRITICAL]
+        criticals = [cm for cm in comments if cm.severity == Severity.CRITICAL]
         if criticals:
-            lines.append("\n**🔴 严重问题：**\n")
-            for c in criticals[:10]:
-                lines.append(f"- `{c.file_path}:{c.line_start}` — {c.message}")
+            items = "\n".join(
+                f"- `{cm.file_path}:{cm.line_start}` — {cm.message}"
+                for cm in criticals[:5]
+            )
+            summary += f"\n\n**🔴 严重问题：**\n{items}"
 
-        return "\n".join(lines)
+        return summary

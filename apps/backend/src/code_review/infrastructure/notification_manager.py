@@ -121,7 +121,7 @@ class NotificationManager:
     ) -> NotificationPayload:
         """解析模板并渲染，返回附有 rendered_title/rendered_body 的新 payload。
 
-        无法解析或渲染失败时返回原始 payload（渠道使用硬编码兜底逻辑）。
+        无法解析或渲染失败时返回原始 payload，渠道收到未渲染的 payload 后会抛出异常。
         """
         if session_factory is None or project_id is None or notification_id is None:
             return payload
@@ -133,13 +133,18 @@ class NotificationManager:
             async with session_factory() as session:
                 svc = NotificationTemplateService(session)
                 tpl = await svc.resolve_template(project_id, notification_id)
-
-            if tpl is None:
-                return payload
+                if tpl is None:
+                    logger.warning("未找到通知模板（project=%s, notification=%s），跳过通知发送", project_id, notification_id)
+                    return payload
+                # 在 session 内读取模板字段，避免 detached 后访问失败
+                tpl_name = tpl.name
+                title_template = tpl.title_template
+                body_template = tpl.body_template
 
             rendered_title, rendered_body = NotificationRenderer.render(
-                tpl.title_template, tpl.body_template, payload
+                title_template, body_template, payload
             )
+            logger.info("使用自定义模板渲染通知: %s", tpl_name)
             import dataclasses
             return dataclasses.replace(
                 payload,
@@ -147,7 +152,7 @@ class NotificationManager:
                 rendered_body=rendered_body,
             )
         except Exception as e:
-            logger.warning("模板渲染失败，使用硬编码兜底: %s", e)
+            logger.warning("模板渲染失败: %s", e)
             return payload
 
     async def health_check(self) -> dict[str, bool]:

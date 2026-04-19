@@ -191,7 +191,6 @@ class NotificationTemplate(Base):
     )
 
     __table_args__ = (
-        UniqueConstraint("name", name="uq_notification_template_name"),
         Index("idx_notification_templates_channel", "channel"),
         Index("idx_notification_templates_is_default", "is_default"),
     )

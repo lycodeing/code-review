@@ -40,20 +40,20 @@
       </div>
 
       <el-table :data="filteredData" v-loading="loading" stripe>
-        <el-table-column prop="name" label="项目名称" min-width="130">
+        <el-table-column prop="name" label="项目名称" min-width="250">
           <template #default="{ row }">
             <span class="link-text" @click="viewProject(row)">{{ row.name }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="platform" label="平台" width="140">
+        <el-table-column prop="platform" label="平台" min-width="100">
           <template #default="{ row }">
             <el-tag :color="platformColors[row.platform]" effect="dark" size="small" style="border: none">
               {{ platformNames[row.platform] || row.platform }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="platform_project_id" label="平台项目 ID" min-width="160" show-overflow-tooltip />
-        <el-table-column prop="enabled" label="状态" width="100" align="center">
+        <el-table-column prop="platform_project_id" label="平台项目 ID" min-width="250" show-overflow-tooltip />
+        <el-table-column prop="enabled" label="状态" min-width="200" align="center">
           <template #default="{ row }">
             <el-switch
               :model-value="row.enabled === 1"
@@ -61,23 +61,31 @@
             />
           </template>
         </el-table-column>
-        <el-table-column prop="created_at" label="创建时间" width="240">
+        <el-table-column prop="created_at" label="创建时间" min-width="200">
           <template #default="{ row }">{{ formatDateTime(row.created_at) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="300" fixed="right">
+        <el-table-column label="操作" width="220" fixed="right">
           <template #default="{ row }">
-            <el-button text type="primary" size="small" @click="openForm(row)">
-              <el-icon><Edit /></el-icon> 编辑
-            </el-button>
-            <el-button text size="small" class="prompt-btn" @click="openPromptBindings(row)">
-              <el-icon><Tickets /></el-icon> 模板
-            </el-button>
-            <el-button text size="small" class="llm-btn" @click="openLLMBindings(row)">
-              <el-icon><Cpu /></el-icon> LLM
-            </el-button>
-            <el-button text type="danger" size="small" @click="handleDelete(row)">
-              <el-icon><Delete /></el-icon> 删除
-            </el-button>
+            <div class="action-btns">
+              <el-button text type="primary" size="small" @click="openForm(row)">
+                <el-icon><Edit /></el-icon> 编辑
+              </el-button>
+              <el-dropdown trigger="click" @command="(cmd) => handleActionCmd(cmd, row)">
+                <el-button text size="small">
+                  <el-icon><Setting /></el-icon> 配置
+                </el-button>
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item command="prompt" :icon="Tickets">Prompt 模板</el-dropdown-item>
+                    <el-dropdown-item command="llm" :icon="Cpu">LLM 配置</el-dropdown-item>
+                    <el-dropdown-item command="notification" :icon="Bell">通知模板</el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
+              <el-button text type="danger" size="small" @click="handleDelete(row)">
+                <el-icon><Delete /></el-icon> 删除
+              </el-button>
+            </div>
           </template>
         </el-table-column>
       </el-table>
@@ -121,6 +129,14 @@
       :project-name="currentProject?.name || ''"
       @close="promptBindingsVisible = false"
     />
+    <!-- 通知模板绑定弹窗 -->
+    <ProjectNotificationBindings
+      v-if="notificationBindingsVisible"
+      :visible="notificationBindingsVisible"
+      :project-id="currentProject?.id"
+      :project-name="currentProject?.name || ''"
+      @close="notificationBindingsVisible = false"
+    />
   </div>
 </template>
 
@@ -128,18 +144,20 @@
 import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Search, Refresh, Edit, Delete, Cpu, Tickets } from '@element-plus/icons-vue'
+import { Search, Refresh, Edit, Delete, Cpu, Tickets, Bell, Setting } from '@element-plus/icons-vue'
 import { getProjects, deleteProject, updateProject } from '@/api/projects'
 import { useTable } from '@/composables/useTable'
 import { formatDateTime, platformColors, platformNames } from '@/utils/format'
 import ProjectForm from './ProjectForm.vue'
 import ProjectLLMBindings from './ProjectLLMBindings.vue'
 import ProjectTemplateBindings from './ProjectTemplateBindings.vue'
+import ProjectNotificationBindings from './ProjectNotificationBindings.vue'
 
 const router = useRouter()
 const formVisible = ref(false)
 const llmBindingsVisible = ref(false)
 const promptBindingsVisible = ref(false)
+const notificationBindingsVisible = ref(false)
 const currentProject = ref(null)
 
 const filters = ref({ keyword: '', platform: '', enabled: '' })
@@ -179,6 +197,17 @@ function openLLMBindings(project) {
 function openPromptBindings(project) {
   currentProject.value = project
   promptBindingsVisible.value = true
+}
+
+function openNotificationBindings(project) {
+  currentProject.value = project
+  notificationBindingsVisible.value = true
+}
+
+function handleActionCmd(cmd, project) {
+  if (cmd === 'prompt') openPromptBindings(project)
+  else if (cmd === 'llm') openLLMBindings(project)
+  else if (cmd === 'notification') openNotificationBindings(project)
 }
 
 function viewProject(row) {
@@ -247,5 +276,12 @@ loadData()
 .prompt-btn {
   color: #e6a23c;
   &:hover { color: #cf8a22; }
+}
+
+.action-btns {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-wrap: nowrap;
 }
 </style>

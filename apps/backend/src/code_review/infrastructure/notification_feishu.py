@@ -63,27 +63,9 @@ class FeishuChannel(NotificationChannel):
         return False
 
     def _build_message(self, payload: NotificationPayload) -> dict:
-        """构建飞书消息卡片。
-
-        优先使用模板渲染结果（payload.rendered_title / rendered_body），
-        无渲染内容时降级为硬编码格式。
-        """
-        if payload.rendered_title and payload.rendered_body:
-            header_title = payload.rendered_title
-            body_content = payload.rendered_body
-        else:
-            # 硬编码兜底
-            header_title = f"🔍 代码评审结果 - {payload.mr_title}"
-            body_content = (
-                f"**项目**: {payload.project_name}\n"
-                f"**MR**: [{payload.mr_title}]({payload.mr_url})\n"
-                f"**作者**: {payload.mr_author}\n\n"
-                f"{payload.summary}\n\n"
-                f"🔴 严重: {payload.critical_count} | "
-                f"🟡 警告: {payload.warning_count} | "
-                f"🔵 建议: {payload.suggestion_count} | "
-                f"ℹ️ 信息: {payload.info_count}"
-            )
+        """构建飞书消息卡片，使用模板渲染结果。"""
+        if not payload.rendered_title or not payload.rendered_body:
+            raise ValueError("通知模板未渲染，请为该渠道配置通知模板")
 
         header_color = "red" if payload.critical_count > 0 else (
             "orange" if payload.warning_count > 0 else "blue"
@@ -93,11 +75,11 @@ class FeishuChannel(NotificationChannel):
             "msg_type": "interactive",
             "card": {
                 "header": {
-                    "title": {"tag": "plain_text", "content": header_title},
+                    "title": {"tag": "plain_text", "content": payload.rendered_title},
                     "template": header_color,
                 },
                 "elements": [
-                    {"tag": "markdown", "content": body_content},
+                    {"tag": "markdown", "content": payload.rendered_body},
                 ],
             },
         }

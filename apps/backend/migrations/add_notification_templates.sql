@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS notification_templates (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
-    CONSTRAINT uq_notification_template_name UNIQUE (name)
+    CONSTRAINT uq_notification_template_name UNIQUE (name, channel)
 );
 
 CREATE INDEX IF NOT EXISTS idx_notification_templates_channel ON notification_templates(channel);
