@@ -2,20 +2,21 @@
 
 import uuid
 from datetime import datetime, timezone
+from enum import StrEnum
 
 from sqlalchemy import (
-    JSON,
     Boolean,
     Column,
     DateTime,
     ForeignKey,
     Index,
     Integer,
+    JSON,
     String,
     Text,
     UniqueConstraint,
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import DeclarativeBase, relationship
 
 
@@ -428,11 +429,11 @@ class ApiCallLog(Base):
     """外部 API 调用日志表 —— 统一记录 LLM 调用和通知发送的请求/响应详情。"""
     __tablename__ = "api_call_logs"
 
-    class CallType(str):
+    class CallType(StrEnum):
         LLM = "llm"
         NOTIFICATION = "notification"
 
-    class CallStatus(str):
+    class CallStatus(StrEnum):
         SUCCESS = "success"
         FAILED = "failed"
 
@@ -447,10 +448,10 @@ class ApiCallLog(Base):
     provider = Column(String(64), nullable=True, comment="提供商: dingtalk/feishu/gpt-4/claude-... 等")
     method = Column(String(16), nullable=True, comment="HTTP 方法")
     url = Column(Text, nullable=True, comment="端点 URL（已脱敏）")
-    request_headers = Column(JSON, nullable=True, comment="请求头（敏感字段已脱敏）")
-    request_body = Column(JSON, nullable=True, comment="请求体")
+    request_headers = Column(JSONB, nullable=True, comment="请求头（敏感字段已脱敏）")
+    request_body = Column(JSONB, nullable=True, comment="请求体")
     response_status = Column(Integer, nullable=True, comment="HTTP 响应状态码")
-    response_body = Column(JSON, nullable=True, comment="响应内容（超大内容已截断）")
+    response_body = Column(JSONB, nullable=True, comment="响应内容（超大内容已截断）")
     status = Column(String(32), nullable=False, default=CallStatus.SUCCESS, comment="调用结果: success / failed")
     error_message = Column(Text, nullable=True, comment="失败时的错误详情")
     duration_ms = Column(Integer, nullable=True, comment="请求耗时（毫秒）")

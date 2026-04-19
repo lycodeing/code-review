@@ -52,19 +52,10 @@ class DingTalkChannel(NotificationChannel):
                 error_message="渠道未启用或 Webhook URL 未配置",
             )
 
+        t0 = time.perf_counter()
+        body: dict = {}
         try:
             body = self._build_message(payload)
-        except ValueError as e:
-            return NotificationResult(
-                success=False,
-                provider="dingtalk",
-                url=sanitized_url,
-                request_headers=req_headers,
-                error_message=str(e),
-            )
-
-        t0 = time.perf_counter()
-        try:
             async with httpx.AsyncClient(timeout=30) as client:
                 resp = await client.post(url, json=body, headers=req_headers)
 
@@ -110,7 +101,7 @@ class DingTalkChannel(NotificationChannel):
                 provider="dingtalk",
                 url=sanitized_url,
                 request_headers=req_headers,
-                request_body=body if "body" in dir() else {},
+                request_body=body,
                 error_message=str(e),
                 duration_ms=duration_ms,
             )

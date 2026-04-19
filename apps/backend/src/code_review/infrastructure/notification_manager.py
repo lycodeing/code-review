@@ -1,5 +1,6 @@
 """通知渠道管理器 - 统一调度所有通知渠道。"""
 
+import dataclasses
 import logging
 from uuid import UUID
 
@@ -99,7 +100,6 @@ class NotificationManager:
         project_id: UUID | None = None,
         task_id: UUID | None = None,
         session_factory=None,
-        secret_key: str = "",
     ) -> dict[str, bool]:
         """向所有已启用渠道发送通知，并将结果写入 api_call_logs。
 
@@ -108,7 +108,6 @@ class NotificationManager:
             project_id: 项目 UUID，有值时尝试解析项目级模板绑定。
             task_id: 评审任务 UUID，有值时将发送记录写入 api_call_logs。
             session_factory: 数据库 session 工厂。
-            secret_key: 解密密钥。
 
         Returns:
             各渠道发送结果 {channel_name: success}。
@@ -163,7 +162,6 @@ class NotificationManager:
                 title_template, body_template, payload
             )
             logger.info("使用自定义模板渲染通知: %s", tpl_name)
-            import dataclasses
             return dataclasses.replace(
                 payload,
                 rendered_title=rendered_title,

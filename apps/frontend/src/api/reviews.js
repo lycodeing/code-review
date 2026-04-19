@@ -54,8 +54,3 @@ export function sendReviewNotification(id) {
   return request.post(`/reviews/${id}/notify`)
 }
 
-/** 获取评审任务的 API 调用日志 */
-export function getReviewLogs(id) {
-  return request.get(`/reviews/${id}/logs`)
-}
-

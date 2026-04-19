@@ -11,6 +11,7 @@ from sqlalchemy import select, func, delete as sql_delete
 from code_review.models.db import ApiCallLog, Project, ReviewTask, ReviewComment
 from code_review.infrastructure.cache import event_dedup_cache
 from code_review.adapters.factory import create_adapter
+from code_review.api.logs import ApiCallLogResponse
 
 logger = logging.getLogger(__name__)
 
@@ -69,25 +70,6 @@ class ManualReviewRequest(BaseModel):
     project_id: UUID = Field(..., description="项目 ID")
     mr_iid: str = Field(..., min_length=1, max_length=64, description="MR 短 ID")
     trigger_action: str = Field(default="manual", description="触发动作标识")
-
-
-class ApiCallLogResponse(BaseModel):
-    id: UUID
-    task_id: UUID | None
-    call_type: str
-    provider: str | None
-    method: str | None
-    url: str | None
-    request_headers: dict | None
-    request_body: dict | None
-    response_status: int | None
-    response_body: dict | None
-    status: str
-    error_message: str | None
-    duration_ms: int | None
-    created_at: datetime
-
-    model_config = ConfigDict(from_attributes=True)
 
 
 class NotifyResultResponse(BaseModel):
@@ -279,33 +261,6 @@ async def create_manual_review(
     return task
 
 
-@router.get("/logs", response_model=list[ApiCallLogResponse])
-async def list_api_call_logs(
-    request: Request,
-    call_type: str | None = None,
-    status: str | None = None,
-    task_id: UUID | None = None,
-    provider: str | None = None,
-    limit: int = 50,
-    offset: int = 0,
-):
-    """查询全局 API 调用日志，支持按类型、状态、任务、提供商过滤。"""
-    session_factory = request.app.state.session_factory
-    async with session_factory() as session:
-        stmt = select(ApiCallLog).order_by(ApiCallLog.created_at.desc())
-        if call_type:
-            stmt = stmt.where(ApiCallLog.call_type == call_type)
-        if status:
-            stmt = stmt.where(ApiCallLog.status == status)
-        if task_id:
-            stmt = stmt.where(ApiCallLog.task_id == task_id)
-        if provider:
-            stmt = stmt.where(ApiCallLog.provider.ilike(f"%{provider}%"))
-        stmt = stmt.offset(offset).limit(min(limit, 200))
-        result = await session.execute(stmt)
-        return result.scalars().all()
-
-
 @router.post("/reviews/{task_id}/retry", response_model=ReviewTaskResponse)
 async def retry_review(task_id: UUID, background_tasks: BackgroundTasks, request: Request):
     """重试失败的评审任务。"""
@@ -343,15 +298,16 @@ async def retry_review(task_id: UUID, background_tasks: BackgroundTasks, request
         logger.warning("Celery 分发失败，降级为同步执行: %s", e)
         background_tasks.add_task(orchestrator.execute_review, str(task_id))
 
+    async with session_factory() as session:
+        refreshed = await session.get(ReviewTask, task_id)
     logger.info("重试评审任务: %s", task_id)
-    return task
+    return refreshed or task
 
 
 @router.post("/reviews/{task_id}/notify", response_model=NotifyResultResponse)
 async def send_review_notification(task_id: UUID, request: Request):
     """对已完成的评审手动发送通知。"""
     session_factory = request.app.state.session_factory
-    notification_manager = request.app.state.notification_manager
     orchestrator = request.app.state.orchestrator
 
     async with session_factory() as session:
@@ -402,17 +358,18 @@ async def send_review_notification(task_id: UUID, request: Request):
         detail_link=mr_url,
     )
 
-    await notification_manager.init_channels_from_db(
+    from code_review.infrastructure.notification_manager import NotificationManager
+    local_nm = NotificationManager(request.app.state.config)
+    await local_nm.init_channels_from_db(
         session_factory,
         secret_key=orchestrator._secret_key,
         platform=platform_val,
     )
-    channels = await notification_manager.notify_all(
+    channels = await local_nm.notify_all(
         notification_payload,
         project_id=project_id_val,
         task_id=task_id_val,
         session_factory=session_factory,
-        secret_key=orchestrator._secret_key,
     )
 
     sent = sum(1 for v in channels.values() if v)

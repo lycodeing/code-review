@@ -201,13 +201,8 @@ async function loadLogs() {
     if (filters.value.provider) params.provider = filters.value.provider
 
     const data = await getApiCallLogs(params)
-    tableData.value = Array.isArray(data) ? data : []
-    // 后端返回的是数组，total 用实际数量（下一页有数据时分页继续）
-    if (data.length === pagination.value.pageSize) {
-      total.value = (pagination.value.page * pagination.value.pageSize) + 1
-    } else {
-      total.value = (pagination.value.page - 1) * pagination.value.pageSize + data.length
-    }
+    tableData.value = Array.isArray(data.items) ? data.items : []
+    total.value = data.total ?? 0
   } catch (error) {
     ElMessage.error(error.message || '加载失败')
   } finally {

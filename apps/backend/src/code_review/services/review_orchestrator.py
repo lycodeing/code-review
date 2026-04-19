@@ -373,7 +373,6 @@ class ReviewOrchestrator:
                     project_id=task.project_id,
                     task_id=task.id,
                     session_factory=self._session_factory,
-                    secret_key=self._secret_key,
                 )
 
                 task.status = ReviewTask.Status.COMPLETED

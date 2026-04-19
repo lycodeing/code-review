@@ -9,7 +9,9 @@ const md = new MarkdownIt({
     if (lang && hljs.getLanguage(lang)) {
       try {
         return `<pre class="hljs-block"><code class="hljs language-${lang}">${hljs.highlight(code, { language: lang, ignoreIllegals: true }).value}</code></pre>`
-      } catch {}
+      } catch (e) {
+        console.debug('highlight.js 高亮失败，降级为纯文本:', lang, e)
+      }
     }
     return `<pre class="hljs-block"><code class="hljs">${md.utils.escapeHtml(code)}</code></pre>`
   },
