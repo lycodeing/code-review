@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
+  <!-- 深色圆角背景 -->
+  <rect width="32" height="32" rx="7" fill="#1a1f2e"/>
+
+  <!-- 左括号 < -->
+  <path d="M7 11 L12 16 L7 21" stroke="#4f9cf9" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- 右括号 > (缩短，给放大镜留位) -->
+  <path d="M17 11 L22 16 L17 21" stroke="#4f9cf9" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- 放大镜圆圈 -->
+  <circle cx="23.5" cy="22.5" r="4" stroke="#52c41a" stroke-width="1.8" fill="none"/>
+
+  <!-- 放大镜柄 -->
+  <line x1="26.3" y1="25.3" x2="28.5" y2="27.5" stroke="#52c41a" stroke-width="1.8" stroke-linecap="round"/>
+
+  <!-- 放大镜内勾 -->
+  <path d="M21.8 22.5 L23.2 24 L25.5 21.5" stroke="#52c41a" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
