@@ -54,6 +54,12 @@ const routes = [
         meta: { title: '通知配置', icon: 'Bell' }
       },
       {
+        path: 'notification-templates',
+        name: 'NotificationTemplates',
+        component: () => import('@/views/notification/NotificationTemplateList.vue'),
+        meta: { title: '通知模板', icon: 'ChatDotSquare' }
+      },
+      {
         path: 'llm-configs',
         name: 'LLMConfigs',
         component: () => import('@/views/llm/LLMConfigList.vue'),

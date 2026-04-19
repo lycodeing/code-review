@@ -162,6 +162,44 @@ class PlatformConfig(Base):
         return f"<PlatformConfig {self.platform}>"
 
 
+class NotificationTemplate(Base):
+    """通知消息模板表。"""
+    __tablename__ = "notification_templates"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name = Column(String(128), nullable=False, unique=True, comment="模板名称（唯一标识）")
+    channel = Column(String(32), nullable=False, comment="渠道标识: dingtalk / feishu")
+    description = Column(String(512), nullable=False, default="", comment="模板描述")
+    title_template = Column(String(512), nullable=False, default="", comment="卡片标题模板，支持 {{变量}} 语法")
+    body_template = Column(Text, nullable=False, default="", comment="正文 Markdown 模板，支持 {{变量}} 语法")
+    enabled = Column(Boolean, nullable=False, default=True, comment="是否启用")
+    is_default = Column(Boolean, nullable=False, default=False, comment="是否为该渠道的内置默认模板（不可删除）")
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(tz=timezone.utc))
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(tz=timezone.utc), onupdate=lambda: datetime.now(tz=timezone.utc))
+
+    # 渠道配置中引用此模板
+    notification_configs = relationship(
+        "NotificationConfig",
+        back_populates="template",
+        foreign_keys="NotificationConfig.template_id",
+    )
+    # 项目级绑定
+    project_bindings = relationship(
+        "ProjectNotificationTemplateBinding",
+        back_populates="template",
+        foreign_keys="ProjectNotificationTemplateBinding.template_id",
+    )
+
+    __table_args__ = (
+        UniqueConstraint("name", name="uq_notification_template_name"),
+        Index("idx_notification_templates_channel", "channel"),
+        Index("idx_notification_templates_is_default", "is_default"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<NotificationTemplate {self.name} [{self.channel}]>"
+
+
 class NotificationConfig(Base):
     """通知渠道配置表。"""
     __tablename__ = "notification_configs"
@@ -173,6 +211,13 @@ class NotificationConfig(Base):
     secret = Column(Text, nullable=False, default="", comment="签名密钥（加密）")
     at_mobiles = Column(String(1024), nullable=False, default="", comment="@人手机号（逗号分隔）")
     description = Column(String(512), nullable=False, default="", comment="说明文字")
+    # 渠道默认模板（NULL 时使用内置 is_default 模板）
+    template_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("notification_templates.id", ondelete="SET NULL"),
+        nullable=True,
+        comment="渠道默认模板，空时使用内置默认模板",
+    )
     created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(tz=timezone.utc))
     updated_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(tz=timezone.utc), onupdate=lambda: datetime.now(tz=timezone.utc))
 
@@ -180,6 +225,12 @@ class NotificationConfig(Base):
         "PlatformNotificationBinding",
         back_populates="notification",
         cascade="all, delete-orphan",
+    )
+    # 渠道默认模板关联
+    template = relationship(
+        "NotificationTemplate",
+        back_populates="notification_configs",
+        foreign_keys=[template_id],
     )
 
     def __repr__(self) -> str:
@@ -327,3 +378,48 @@ class ProjectPromptBinding(Base):
 
     def __repr__(self) -> str:
         return f"<ProjectPromptBinding {self.project_id}->{self.template_id}>"
+
+
+class ProjectNotificationTemplateBinding(Base):
+    """项目级通知模板绑定表（每个项目每个渠道只有一条）。"""
+    __tablename__ = "project_notification_template_bindings"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=False,
+        comment="项目 ID",
+    )
+    notification_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("notification_configs.id", ondelete="CASCADE"),
+        nullable=False,
+        comment="通知渠道配置 ID",
+    )
+    template_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("notification_templates.id", ondelete="SET NULL"),
+        nullable=True,
+        comment="指定模板，NULL 时降级到渠道默认模板",
+    )
+    enabled = Column(Boolean, nullable=False, default=True, comment="此绑定是否启用")
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(tz=timezone.utc))
+
+    project = relationship("Project")
+    notification = relationship("NotificationConfig")
+    template = relationship(
+        "NotificationTemplate",
+        back_populates="project_bindings",
+        foreign_keys=[template_id],
+    )
+
+    __table_args__ = (
+        UniqueConstraint("project_id", "notification_id", name="uq_project_notification_binding"),
+        Index("idx_proj_notif_tpl_project", "project_id"),
+        Index("idx_proj_notif_tpl_notification", "notification_id"),
+        Index("idx_proj_notif_tpl_template", "template_id"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<ProjectNotificationTemplateBinding {self.project_id}->{self.notification_id}>"

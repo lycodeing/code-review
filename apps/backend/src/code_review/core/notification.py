@@ -17,6 +17,9 @@ class NotificationPayload:
     suggestion_count: int = 0
     info_count: int = 0
     detail_link: str = ""
+    # 模板渲染后填充，非空时渠道优先使用此内容
+    rendered_title: str | None = field(default=None)
+    rendered_body: str | None = field(default=None)
 
 
 class NotificationChannel(ABC):

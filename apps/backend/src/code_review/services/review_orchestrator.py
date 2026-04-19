@@ -366,7 +366,12 @@ class ReviewOrchestrator:
                     ),
                     detail_link=mr_info.web_url or mr_info.url,
                 )
-                await self._notification_manager.notify_all(notification_payload)
+                await self._notification_manager.notify_all(
+                    notification_payload,
+                    project_id=task.project_id,
+                    session_factory=self._session_factory,
+                    secret_key=self._secret_key,
+                )
 
                 task.status = ReviewTask.Status.COMPLETED
                 task.completed_at = datetime.now(tz=timezone.utc)
