@@ -309,6 +309,8 @@ class ReviewOrchestrator:
                     diff=combined_diff,
                     files=filtered_changes,
                     prompt_template=prompt,
+                    task_id=task.id,
+                    session_factory=self._session_factory,
                 )
 
                 task.model_name = result.model
@@ -369,6 +371,7 @@ class ReviewOrchestrator:
                 await self._notification_manager.notify_all(
                     notification_payload,
                     project_id=task.project_id,
+                    task_id=task.id,
                     session_factory=self._session_factory,
                     secret_key=self._secret_key,
                 )

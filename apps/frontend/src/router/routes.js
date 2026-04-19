@@ -64,6 +64,12 @@ const routes = [
         name: 'LLMConfigs',
         component: () => import('@/views/llm/LLMConfigList.vue'),
         meta: { title: 'LLM 配置', icon: 'Cpu' }
+      },
+      {
+        path: 'request-history',
+        name: 'RequestHistory',
+        component: () => import('@/views/log/ApiCallLogList.vue'),
+        meta: { title: '请求历史', icon: 'List' }
       }
     ]
   },

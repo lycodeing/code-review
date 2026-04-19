@@ -3,6 +3,7 @@
 import logging
 import time
 from typing import Any
+from uuid import UUID
 
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from langchain_openai import ChatOpenAI
@@ -17,6 +18,45 @@ from code_review.infrastructure.response_parser import (
 from code_review.models.config import LLMConfig
 
 logger = logging.getLogger(__name__)
+
+_MAX_USER_CONTENT = 8000
+_MAX_RESPONSE_CONTENT = 4000
+
+
+async def _save_llm_log(
+    session_factory,
+    task_id: UUID,
+    *,
+    provider: str,
+    url: str,
+    request_body: dict,
+    response_status: int,
+    response_body: dict,
+    status: str,
+    error_message: str | None,
+    duration_ms: int,
+) -> None:
+    try:
+        from code_review.models.db import ApiCallLog
+        async with session_factory() as session:
+            log = ApiCallLog(
+                task_id=task_id,
+                call_type=ApiCallLog.CallType.LLM,
+                provider=provider,
+                method="POST",
+                url=url,
+                request_headers={"Authorization": "[REDACTED]", "Content-Type": "application/json"},
+                request_body=request_body,
+                response_status=response_status,
+                response_body=response_body,
+                status=status,
+                error_message=error_message,
+                duration_ms=duration_ms,
+            )
+            session.add(log)
+            await session.commit()
+    except Exception as e:
+        logger.warning("记录 LLM 调用日志失败: %s", e)
 
 
 class LangChainReviewer(LLMReviewer):
@@ -91,6 +131,8 @@ class LangChainReviewer(LLMReviewer):
         diff: str,
         files: list[FileChange],
         prompt_template: str,
+        task_id: UUID | None = None,
+        session_factory=None,
     ) -> ReviewResult:
         start_time = time.time()
         total_tokens = 0
@@ -104,6 +146,18 @@ class LangChainReviewer(LLMReviewer):
         full_prompt = prompt_template.replace("{{diff}}", diff)
         full_prompt = full_prompt.replace("{{files_context}}", files_context)
 
+        log_request_body = {
+            "model": self._config.model,
+            "max_tokens": self._config.max_tokens,
+            "base_url": self._config.api_base or None,
+            "messages": [
+                {"role": "system", "content": "You are an expert code reviewer. Analyze the provided diff and return structured review comments. Always respond in valid JSON format."},
+                {"role": "user", "content": full_prompt[:_MAX_USER_CONTENT]},
+            ],
+        }
+        log_url = f"{self._config.api_base}/chat/completions" if self._config.api_base else "langchain"
+
+        t0 = time.perf_counter()
         try:
             # 构建消息
             messages = [
@@ -115,11 +169,11 @@ class LangChainReviewer(LLMReviewer):
                 HumanMessage(content=full_prompt),
             ]
 
-            # 调用 LLM
             logger.debug("调用 LangChain LLM: model=%s, base_url=%s", self._config.model, self._config.api_base)
 
             response = await self._llm.ainvoke(messages)
             content = response.content
+            duration_ms = int((time.perf_counter() - t0) * 1000)
 
             # 尝试获取 token 使用量（LangChain 可能不返回）
             if hasattr(response, 'usage_metadata') and response.usage_metadata:
@@ -140,7 +194,6 @@ class LangChainReviewer(LLMReviewer):
             comments = parsed_result.comments
             summary = parsed_result.summary
 
-            # 记录解析详情
             logger.debug(
                 "解析完成: 配置格式=%s, 实际使用格式=%s, 评论数=%d, 摘要长度=%d",
                 self._config.response_format,
@@ -151,12 +204,48 @@ class LangChainReviewer(LLMReviewer):
             for warning in parsed_result.warnings:
                 logger.warning(f"解析警告: {warning}")
 
+            if task_id is not None and session_factory is not None:
+                await _save_llm_log(
+                    session_factory,
+                    task_id,
+                    provider=self._config.model,
+                    url=log_url,
+                    request_body=log_request_body,
+                    response_status=200,
+                    response_body={
+                        "content": content[:_MAX_RESPONSE_CONTENT],
+                        "total_tokens": total_tokens,
+                        "format_used": parsed_result.format_used.value,
+                        "comments_count": len(comments),
+                    },
+                    status="success",
+                    error_message=None,
+                    duration_ms=duration_ms,
+                )
+
         except ValueError as e:
-            # 多格式解析失败
+            duration_ms = int((time.perf_counter() - t0) * 1000)
             logger.error("多格式解析器失败: %s", e)
+            if task_id is not None and session_factory is not None:
+                await _save_llm_log(
+                    session_factory, task_id,
+                    provider=self._config.model, url=log_url,
+                    request_body=log_request_body,
+                    response_status=200, response_body={},
+                    status="failed", error_message=str(e), duration_ms=duration_ms,
+                )
             raise
         except Exception as e:
+            duration_ms = int((time.perf_counter() - t0) * 1000)
             logger.error(f"LangChain LLM 调用失败: {e}", exc_info=True)
+            if task_id is not None and session_factory is not None:
+                await _save_llm_log(
+                    session_factory, task_id,
+                    provider=self._config.model, url=log_url,
+                    request_body=log_request_body,
+                    response_status=0, response_body={},
+                    status="failed", error_message=str(e), duration_ms=duration_ms,
+                )
             raise
 
         elapsed = time.time() - start_time

@@ -59,6 +59,11 @@
             <template #title>LLM 配置</template>
           </el-menu-item>
         </el-sub-menu>
+
+        <el-menu-item index="/request-history">
+          <el-icon><List /></el-icon>
+          <template #title>请求历史</template>
+        </el-menu-item>
       </el-menu>
     </el-scrollbar>
   </div>
@@ -67,7 +72,7 @@
 <script setup>
 import { useRoute } from 'vue-router'
 import { useAppStore } from '@/stores/app'
-import { Cpu, ChatDotSquare } from '@element-plus/icons-vue'
+import { Cpu, ChatDotSquare, List } from '@element-plus/icons-vue'
 
 const route = useRoute()
 const appStore = useAppStore()

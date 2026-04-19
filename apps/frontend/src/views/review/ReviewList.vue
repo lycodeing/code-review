@@ -95,11 +95,21 @@
         <el-table-column prop="created_at" label="创建时间" width="175">
           <template #default="{ row }">{{ formatDateTime(row.created_at) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="140" fixed="right" align="center">
+        <el-table-column label="操作" width="180" fixed="right" align="center">
           <template #default="{ row }">
             <div style="display: flex; justify-content: center; gap: 4px; white-space: nowrap;">
               <el-button text type="primary" size="small" @click="$router.push(`/reviews/${row.id}`)">
                 详情
+              </el-button>
+              <el-button
+                v-if="row.status === 'failed'"
+                text
+                type="warning"
+                size="small"
+                :loading="retryingIds.has(row.id)"
+                @click="handleRetry(row)"
+              >
+                重试
               </el-button>
               <el-button text type="danger" size="small" @click="handleDelete(row)">
                 删除
@@ -209,7 +219,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Delete, Refresh, Search } from '@element-plus/icons-vue'
-import { getReviews, deleteReview, batchDeleteReviews, deleteReviewsByDate, createManualReview, clearAllReviews } from '@/api/reviews'
+import { getReviews, deleteReview, batchDeleteReviews, deleteReviewsByDate, createManualReview, clearAllReviews, retryReview } from '@/api/reviews'
 import { getProjects } from '@/api/projects'
 import { useTable } from '@/composables/useTable'
 import { formatDateTime } from '@/utils/format'
@@ -237,10 +247,25 @@ const filteredData = computed(() => {
 // 批量选择
 const selectedRows = ref([])
 const selectedIds = ref([])
+const retryingIds = ref(new Set())
 
 function handleSelectionChange(selection) {
   selectedRows.value = selection
   selectedIds.value = selection.map(row => row.id)
+}
+
+// 重试
+async function handleRetry(row) {
+  try {
+    retryingIds.value.add(row.id)
+    await retryReview(row.id)
+    ElMessage.success('已重新提交评审任务')
+    loadData(filters.value)
+  } catch (error) {
+    ElMessage.error(error.message || '重试失败')
+  } finally {
+    retryingIds.value.delete(row.id)
+  }
 }
 
 // 单条删除

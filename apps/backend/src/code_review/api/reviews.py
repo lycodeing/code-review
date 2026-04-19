@@ -8,7 +8,7 @@ from fastapi import APIRouter, HTTPException, Request, BackgroundTasks
 from pydantic import BaseModel, Field, ConfigDict
 from sqlalchemy import select, func, delete as sql_delete
 
-from code_review.models.db import Project, ReviewTask, ReviewComment
+from code_review.models.db import ApiCallLog, Project, ReviewTask, ReviewComment
 from code_review.infrastructure.cache import event_dedup_cache
 from code_review.adapters.factory import create_adapter
 
@@ -24,6 +24,8 @@ class ReviewTaskResponse(BaseModel):
     mr_title: str | None
     mr_author: str | None
     mr_url: str | None
+    source_branch: str | None
+    target_branch: str | None
     status: str
     trigger_action: str | None
     model_name: str | None
@@ -67,6 +69,31 @@ class ManualReviewRequest(BaseModel):
     project_id: UUID = Field(..., description="项目 ID")
     mr_iid: str = Field(..., min_length=1, max_length=64, description="MR 短 ID")
     trigger_action: str = Field(default="manual", description="触发动作标识")
+
+
+class ApiCallLogResponse(BaseModel):
+    id: UUID
+    task_id: UUID | None
+    call_type: str
+    provider: str | None
+    method: str | None
+    url: str | None
+    request_headers: dict | None
+    request_body: dict | None
+    response_status: int | None
+    response_body: dict | None
+    status: str
+    error_message: str | None
+    duration_ms: int | None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class NotifyResultResponse(BaseModel):
+    sent: int
+    failed: int
+    channels: dict[str, bool]
 
 
 @router.get("/reviews", response_model=list[ReviewTaskResponse])
@@ -250,6 +277,165 @@ async def create_manual_review(
     background_tasks.add_task(run_review)
     logger.info(f"创建手动评审任务: {task.id}")
     return task
+
+
+@router.get("/logs", response_model=list[ApiCallLogResponse])
+async def list_api_call_logs(
+    request: Request,
+    call_type: str | None = None,
+    status: str | None = None,
+    task_id: UUID | None = None,
+    provider: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+):
+    """查询全局 API 调用日志，支持按类型、状态、任务、提供商过滤。"""
+    session_factory = request.app.state.session_factory
+    async with session_factory() as session:
+        stmt = select(ApiCallLog).order_by(ApiCallLog.created_at.desc())
+        if call_type:
+            stmt = stmt.where(ApiCallLog.call_type == call_type)
+        if status:
+            stmt = stmt.where(ApiCallLog.status == status)
+        if task_id:
+            stmt = stmt.where(ApiCallLog.task_id == task_id)
+        if provider:
+            stmt = stmt.where(ApiCallLog.provider.ilike(f"%{provider}%"))
+        stmt = stmt.offset(offset).limit(min(limit, 200))
+        result = await session.execute(stmt)
+        return result.scalars().all()
+
+
+@router.post("/reviews/{task_id}/retry", response_model=ReviewTaskResponse)
+async def retry_review(task_id: UUID, background_tasks: BackgroundTasks, request: Request):
+    """重试失败的评审任务。"""
+    session_factory = request.app.state.session_factory
+    orchestrator = request.app.state.orchestrator
+
+    async with session_factory() as session:
+        task = await session.get(ReviewTask, task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail="评审记录不存在")
+        if task.status == ReviewTask.Status.IN_PROGRESS:
+            raise HTTPException(status_code=409, detail="评审任务正在执行中，无法重试")
+
+        task.status = ReviewTask.Status.PENDING
+        task.error_message = None
+        task.started_at = None
+        task.completed_at = None
+        await session.commit()
+        await session.refresh(task)
+
+    from code_review.infrastructure.celery_app import get_celery
+    try:
+        celery = get_celery()
+        celery_result = celery.send_task(
+            "code_review.execute_review",
+            args=[str(task_id)],
+            queue="review",
+        )
+        async with session_factory() as session:
+            db_task = await session.get(ReviewTask, task_id)
+            if db_task:
+                db_task.celery_task_id = celery_result.id
+                await session.commit()
+    except Exception as e:
+        logger.warning("Celery 分发失败，降级为同步执行: %s", e)
+        background_tasks.add_task(orchestrator.execute_review, str(task_id))
+
+    logger.info("重试评审任务: %s", task_id)
+    return task
+
+
+@router.post("/reviews/{task_id}/notify", response_model=NotifyResultResponse)
+async def send_review_notification(task_id: UUID, request: Request):
+    """对已完成的评审手动发送通知。"""
+    session_factory = request.app.state.session_factory
+    notification_manager = request.app.state.notification_manager
+    orchestrator = request.app.state.orchestrator
+
+    async with session_factory() as session:
+        task = await session.get(ReviewTask, task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail="评审记录不存在")
+        if task.status != ReviewTask.Status.COMPLETED:
+            raise HTTPException(status_code=400, detail="只能对已完成的评审发送通知")
+
+        project = await session.get(Project, task.project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="项目不存在")
+
+        # 在 session 内读取所有需要的字段
+        task_id_val = task.id
+        project_id_val = task.project_id
+        platform_val = project.platform
+        mr_title = task.mr_title or ""
+        mr_author = task.mr_author or ""
+        mr_url = task.mr_url or ""
+        project_name = project.name
+        summary = task.summary or ""
+        critical_count = task.critical_count or 0
+        warning_count = task.warning_count or 0
+
+    from code_review.core.notification import NotificationPayload
+    from sqlalchemy import select as sql_select
+    from code_review.models.db import ReviewComment as ReviewCommentDB
+
+    async with session_factory() as session:
+        result = await session.execute(
+            sql_select(ReviewCommentDB).where(ReviewCommentDB.task_id == task_id_val)
+        )
+        comments = result.scalars().all()
+        suggestion_count = sum(1 for c in comments if c.severity == "suggestion")
+        info_count = sum(1 for c in comments if c.severity == "info")
+
+    notification_payload = NotificationPayload(
+        mr_title=mr_title,
+        mr_author=mr_author,
+        mr_url=mr_url,
+        project_name=project_name,
+        summary=summary,
+        critical_count=critical_count,
+        warning_count=warning_count,
+        suggestion_count=suggestion_count,
+        info_count=info_count,
+        detail_link=mr_url,
+    )
+
+    await notification_manager.init_channels_from_db(
+        session_factory,
+        secret_key=orchestrator._secret_key,
+        platform=platform_val,
+    )
+    channels = await notification_manager.notify_all(
+        notification_payload,
+        project_id=project_id_val,
+        task_id=task_id_val,
+        session_factory=session_factory,
+        secret_key=orchestrator._secret_key,
+    )
+
+    sent = sum(1 for v in channels.values() if v)
+    failed = sum(1 for v in channels.values() if not v)
+    logger.info("手动发送通知: task=%s, sent=%d, failed=%d", task_id, sent, failed)
+    return NotifyResultResponse(sent=sent, failed=failed, channels=channels)
+
+
+@router.get("/reviews/{task_id}/logs", response_model=list[ApiCallLogResponse])
+async def get_review_logs(task_id: UUID, request: Request):
+    """查询评审任务的 API 调用日志。"""
+    session_factory = request.app.state.session_factory
+    async with session_factory() as session:
+        task = await session.get(ReviewTask, task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail="评审记录不存在")
+        stmt = (
+            select(ApiCallLog)
+            .where(ApiCallLog.task_id == task_id)
+            .order_by(ApiCallLog.created_at.asc())
+        )
+        result = await session.execute(stmt)
+        return result.scalars().all()
 
 
 @router.get("/health")

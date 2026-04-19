@@ -422,3 +422,48 @@ class ProjectNotificationTemplateBinding(Base):
 
     def __repr__(self) -> str:
         return f"<ProjectNotificationTemplateBinding {self.project_id}->{self.notification_id}>"
+
+
+class ApiCallLog(Base):
+    """外部 API 调用日志表 —— 统一记录 LLM 调用和通知发送的请求/响应详情。"""
+    __tablename__ = "api_call_logs"
+
+    class CallType(str):
+        LLM = "llm"
+        NOTIFICATION = "notification"
+
+    class CallStatus(str):
+        SUCCESS = "success"
+        FAILED = "failed"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    task_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("review_tasks.id", ondelete="CASCADE"),
+        nullable=True,
+        comment="关联的评审任务 ID",
+    )
+    call_type = Column(String(32), nullable=False, comment="调用类型: llm / notification")
+    provider = Column(String(64), nullable=True, comment="提供商: dingtalk/feishu/gpt-4/claude-... 等")
+    method = Column(String(16), nullable=True, comment="HTTP 方法")
+    url = Column(Text, nullable=True, comment="端点 URL（已脱敏）")
+    request_headers = Column(JSON, nullable=True, comment="请求头（敏感字段已脱敏）")
+    request_body = Column(JSON, nullable=True, comment="请求体")
+    response_status = Column(Integer, nullable=True, comment="HTTP 响应状态码")
+    response_body = Column(JSON, nullable=True, comment="响应内容（超大内容已截断）")
+    status = Column(String(32), nullable=False, default=CallStatus.SUCCESS, comment="调用结果: success / failed")
+    error_message = Column(Text, nullable=True, comment="失败时的错误详情")
+    duration_ms = Column(Integer, nullable=True, comment="请求耗时（毫秒）")
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(tz=timezone.utc))
+
+    task = relationship("ReviewTask", backref="api_call_logs")
+
+    __table_args__ = (
+        Index("idx_api_call_logs_task_id", "task_id"),
+        Index("idx_api_call_logs_call_type", "call_type"),
+        Index("idx_api_call_logs_status", "status"),
+        Index("idx_api_call_logs_created_at", "created_at"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<ApiCallLog {self.call_type}/{self.provider} [{self.status}]>"

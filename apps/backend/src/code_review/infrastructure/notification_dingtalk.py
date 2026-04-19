@@ -4,25 +4,27 @@ import base64
 import hashlib
 import hmac
 import logging
+import re
 import time
+import urllib.parse
 
 import httpx
 
-from code_review.core.notification import NotificationChannel, NotificationPayload
+from code_review.core.notification import NotificationChannel, NotificationPayload, NotificationResult
 
 logger = logging.getLogger(__name__)
+
+_TOKEN_RE = re.compile(r"(access_token=)[^&]+")
+
+
+def _sanitize_url(url: str) -> str:
+    return _TOKEN_RE.sub(r"\1[REDACTED]", url)
 
 
 class DingTalkChannel(NotificationChannel):
     """钉钉自定义机器人 Webhook 通知。"""
 
     def __init__(self, config):
-        """初始化钉钉通知渠道。
-
-        Args:
-            config: NotificationConfig ORM 对象或兼容的 dict/namespace。
-                    需要包含 enabled, webhook_url, secret, at_mobiles 属性。
-        """
         self._enabled = getattr(config, "enabled", False)
         self._webhook_url = getattr(config, "webhook_url", "")
         self._secret = getattr(config, "secret", "")
@@ -36,35 +38,84 @@ class DingTalkChannel(NotificationChannel):
     def enabled(self) -> bool:
         return self._enabled and bool(self._webhook_url)
 
-    async def send(self, payload: NotificationPayload) -> bool:
+    async def send(self, payload: NotificationPayload) -> NotificationResult:
+        url = self._build_signed_url()
+        sanitized_url = _sanitize_url(url)
+        req_headers = {"Content-Type": "application/json"}
+
         if not self.enabled:
-            return False
+            return NotificationResult(
+                success=False,
+                provider="dingtalk",
+                url=sanitized_url,
+                request_headers=req_headers,
+                error_message="渠道未启用或 Webhook URL 未配置",
+            )
 
         try:
-            url = self._build_signed_url()
             body = self._build_message(payload)
+        except ValueError as e:
+            return NotificationResult(
+                success=False,
+                provider="dingtalk",
+                url=sanitized_url,
+                request_headers=req_headers,
+                error_message=str(e),
+            )
 
+        t0 = time.perf_counter()
+        try:
             async with httpx.AsyncClient(timeout=30) as client:
-                resp = await client.post(
-                    url, json=body, headers={"Content-Type": "application/json"}
+                resp = await client.post(url, json=body, headers=req_headers)
+
+            duration_ms = int((time.perf_counter() - t0) * 1000)
+            resp_body: dict = {}
+            try:
+                resp_body = resp.json()
+            except Exception:
+                pass
+
+            if resp.status_code == 200 and resp_body.get("errcode") == 0:
+                logger.info("DingTalk notification sent for MR: %s", payload.mr_title)
+                return NotificationResult(
+                    success=True,
+                    provider="dingtalk",
+                    url=sanitized_url,
+                    request_headers=req_headers,
+                    request_body=body,
+                    response_status=resp.status_code,
+                    response_body=resp_body,
+                    duration_ms=duration_ms,
                 )
 
-            if resp.status_code == 200:
-                result = resp.json()
-                if result.get("errcode") == 0:
-                    logger.info("DingTalk notification sent for MR: %s", payload.mr_title)
-                    return True
-                logger.error("DingTalk API error: %s", result.get("errmsg"))
-            else:
-                logger.error("DingTalk HTTP error: %d", resp.status_code)
+            error_msg = resp_body.get("errmsg") or f"HTTP {resp.status_code}"
+            logger.error("DingTalk send failed: %s", error_msg)
+            return NotificationResult(
+                success=False,
+                provider="dingtalk",
+                url=sanitized_url,
+                request_headers=req_headers,
+                request_body=body,
+                response_status=resp.status_code,
+                response_body=resp_body,
+                error_message=error_msg,
+                duration_ms=duration_ms,
+            )
 
         except Exception as e:
+            duration_ms = int((time.perf_counter() - t0) * 1000)
             logger.error("Failed to send DingTalk notification: %s", e)
-
-        return False
+            return NotificationResult(
+                success=False,
+                provider="dingtalk",
+                url=sanitized_url,
+                request_headers=req_headers,
+                request_body=body if "body" in dir() else {},
+                error_message=str(e),
+                duration_ms=duration_ms,
+            )
 
     def _build_signed_url(self) -> str:
-        """构建带签名的 Webhook URL。"""
         url = self._webhook_url
         if self._secret:
             timestamp = str(round(time.time() * 1000))
@@ -75,12 +126,10 @@ class DingTalkChannel(NotificationChannel):
                 digestmod=hashlib.sha256,
             ).digest()
             sign = base64.b64encode(hmac_code).decode("utf-8")
-            import urllib.parse
             url += f"&timestamp={timestamp}&sign={urllib.parse.quote(sign)}"
         return url
 
     def _build_message(self, payload: NotificationPayload) -> dict:
-        """构建钉钉 ActionCard 卡片消息，使用模板渲染结果。"""
         if not payload.rendered_title or not payload.rendered_body:
             raise ValueError("通知模板未渲染，请为该渠道配置通知模板")
 

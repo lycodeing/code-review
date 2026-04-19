@@ -1,14 +1,14 @@
 """飞书机器人通知渠道。"""
 
+import base64
 import hashlib
 import hmac
-import base64
-import time
 import logging
+import time
 
 import httpx
 
-from code_review.core.notification import NotificationChannel, NotificationPayload
+from code_review.core.notification import NotificationChannel, NotificationPayload, NotificationResult
 
 logger = logging.getLogger(__name__)
 
@@ -17,12 +17,6 @@ class FeishuChannel(NotificationChannel):
     """飞书自定义机器人 Webhook 通知。"""
 
     def __init__(self, config):
-        """初始化飞书通知渠道。
-
-        Args:
-            config: NotificationConfig ORM 对象或兼容的 dict/namespace。
-                    需要包含 enabled, webhook_url, secret 属性。
-        """
         self._enabled = getattr(config, "enabled", False)
         self._webhook_url = getattr(config, "webhook_url", "")
         self._secret = getattr(config, "secret", "")
@@ -35,35 +29,82 @@ class FeishuChannel(NotificationChannel):
     def enabled(self) -> bool:
         return self._enabled and bool(self._webhook_url)
 
-    async def send(self, payload: NotificationPayload) -> bool:
+    async def send(self, payload: NotificationPayload) -> NotificationResult:
+        req_headers = {"Content-Type": "application/json"}
+
         if not self.enabled:
-            return False
+            return NotificationResult(
+                success=False,
+                provider="feishu",
+                url=self._webhook_url,
+                request_headers=req_headers,
+                error_message="渠道未启用或 Webhook URL 未配置",
+            )
 
         try:
-            headers = {"Content-Type": "application/json"}
             body = self._build_message(payload)
+        except ValueError as e:
+            return NotificationResult(
+                success=False,
+                provider="feishu",
+                url=self._webhook_url,
+                request_headers=req_headers,
+                error_message=str(e),
+            )
 
+        t0 = time.perf_counter()
+        try:
             async with httpx.AsyncClient(timeout=30) as client:
-                resp = await client.post(
-                    self._webhook_url, json=body, headers=headers
+                resp = await client.post(self._webhook_url, json=body, headers=req_headers)
+
+            duration_ms = int((time.perf_counter() - t0) * 1000)
+            resp_body: dict = {}
+            try:
+                resp_body = resp.json()
+            except Exception:
+                pass
+
+            if resp.status_code == 200 and resp_body.get("code") == 0:
+                logger.info("Feishu notification sent for MR: %s", payload.mr_title)
+                return NotificationResult(
+                    success=True,
+                    provider="feishu",
+                    url=self._webhook_url,
+                    request_headers=req_headers,
+                    request_body=body,
+                    response_status=resp.status_code,
+                    response_body=resp_body,
+                    duration_ms=duration_ms,
                 )
 
-            if resp.status_code == 200:
-                result = resp.json()
-                if result.get("code") == 0:
-                    logger.info("Feishu notification sent for MR: %s", payload.mr_title)
-                    return True
-                logger.error("Feishu API error: %s", result.get("msg"))
-            else:
-                logger.error("Feishu HTTP error: %d", resp.status_code)
+            error_msg = resp_body.get("msg") or f"HTTP {resp.status_code}"
+            logger.error("Feishu send failed: %s", error_msg)
+            return NotificationResult(
+                success=False,
+                provider="feishu",
+                url=self._webhook_url,
+                request_headers=req_headers,
+                request_body=body,
+                response_status=resp.status_code,
+                response_body=resp_body,
+                error_message=error_msg,
+                duration_ms=duration_ms,
+            )
 
         except Exception as e:
+            duration_ms = int((time.perf_counter() - t0) * 1000)
             logger.error("Failed to send Feishu notification: %s", e)
-
-        return False
+            return NotificationResult(
+                success=False,
+                provider="feishu",
+                url=self._webhook_url,
+                request_headers=req_headers,
+                request_body=body if "body" in dir() else {},
+                error_message=str(e),
+                duration_ms=duration_ms,
+            )
 
     def _build_message(self, payload: NotificationPayload) -> dict:
-        """构建飞书消息卡片，使用模板渲染结果。"""
         if not payload.rendered_title or not payload.rendered_body:
             raise ValueError("通知模板未渲染，请为该渠道配置通知模板")
 
@@ -84,7 +125,6 @@ class FeishuChannel(NotificationChannel):
             },
         }
 
-        # 如果配置了签名密钥，添加签名
         if self._secret:
             timestamp = str(int(time.time()))
             sign = self._gen_sign(timestamp)
@@ -94,7 +134,6 @@ class FeishuChannel(NotificationChannel):
         return message
 
     def _gen_sign(self, timestamp: str) -> str:
-        """生成飞书 Webhook 签名。"""
         string_to_sign = f"{timestamp}\n{self._secret}"
         hmac_code = hmac.new(
             string_to_sign.encode("utf-8"), digestmod=hashlib.sha256

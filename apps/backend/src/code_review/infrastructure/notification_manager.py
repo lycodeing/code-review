@@ -17,23 +17,40 @@ CHANNEL_REGISTRY: dict[str, type[NotificationChannel]] = {
 }
 
 
+async def _save_notification_log(session_factory, task_id: UUID, result) -> None:
+    """将通知发送结果写入 api_call_logs 表。"""
+    try:
+        from code_review.models.db import ApiCallLog
+        async with session_factory() as session:
+            log = ApiCallLog(
+                task_id=task_id,
+                call_type=ApiCallLog.CallType.NOTIFICATION,
+                provider=result.provider,
+                method="POST",
+                url=result.url,
+                request_headers=result.request_headers,
+                request_body=result.request_body,
+                response_status=result.response_status,
+                response_body=result.response_body,
+                status=ApiCallLog.CallStatus.SUCCESS if result.success else ApiCallLog.CallStatus.FAILED,
+                error_message=result.error_message,
+                duration_ms=result.duration_ms,
+            )
+            session.add(log)
+            await session.commit()
+    except Exception as e:
+        logger.warning("记录通知调用日志失败: %s", e)
+
+
 class NotificationManager:
     """统一管理所有通知渠道，支持按配置启用/禁用。"""
 
     def __init__(self, config: AppConfig):
-        """初始化（保留 env 配置作为降级）。"""
         self._config = config
-        # 存储 (channel实例, notification_config_id) 元组，以便 notify_all 时查找模板
         self._channels: list[tuple[NotificationChannel, UUID | None]] = []
 
     async def init_channels_from_db(self, session_factory, secret_key: str, platform: str = "") -> None:
-        """从数据库加载通知渠道配置。
-
-        Args:
-            session_factory: SQLAlchemy async session factory。
-            secret_key: 用于解密敏感字段的密钥。
-            platform: 指定平台时只加载该平台绑定的渠道，为空则加载所有已启用渠道。
-        """
+        """从数据库加载通知渠道配置。"""
         from code_review.services.notification_config_service import NotificationConfigService
 
         self._channels.clear()
@@ -53,7 +70,6 @@ class NotificationManager:
                     self._channels.append((channel, cfg.id))
                     logger.info("Notification channel enabled from DB: %s", channel.name)
 
-        # 如果 DB 中没有启用的渠道，降级到 env 配置
         if not self._channels:
             self._init_channels_from_env()
 
@@ -73,7 +89,7 @@ class NotificationManager:
                         logger.info("Notification channel enabled from ENV: %s", channel_name)
 
     def init_channels_sync(self) -> None:
-        """同步初始化通知渠道（使用 env 配置，用于 Worker 等无 DB 上下文场景）。"""
+        """同步初始化通知渠道（env 配置）。"""
         self._channels.clear()
         self._init_channels_from_env()
 
@@ -81,35 +97,38 @@ class NotificationManager:
         self,
         payload: NotificationPayload,
         project_id: UUID | None = None,
+        task_id: UUID | None = None,
         session_factory=None,
         secret_key: str = "",
     ) -> dict[str, bool]:
-        """向所有已启用渠道发送通知。
-
-        发送前按三级优先级解析通知模板并渲染，结果写入 payload 的
-        rendered_title / rendered_body 字段供渠道使用。
+        """向所有已启用渠道发送通知，并将结果写入 api_call_logs。
 
         Args:
             payload: 通知内容载荷。
             project_id: 项目 UUID，有值时尝试解析项目级模板绑定。
-            session_factory: 数据库 session 工厂，有值时从 DB 解析模板。
-            secret_key: 解密密钥（暂时保留签名，供未来扩展）。
+            task_id: 评审任务 UUID，有值时将发送记录写入 api_call_logs。
+            session_factory: 数据库 session 工厂。
+            secret_key: 解密密钥。
 
         Returns:
             各渠道发送结果 {channel_name: success}。
         """
         results = {}
         for channel, notification_id in self._channels:
-            # 尝试解析并渲染模板，写入 payload 临时字段
             rendered_payload = await self._render_payload(
                 payload, project_id, notification_id, session_factory,
             )
             try:
-                success = await channel.send(rendered_payload)
-                results[channel.name] = success
+                result = await channel.send(rendered_payload)
+                results[channel.name] = result.success
             except Exception as e:
                 logger.error("Notification channel %s failed: %s", channel.name, e)
                 results[channel.name] = False
+                result = None
+
+            if task_id is not None and session_factory is not None and result is not None:
+                await _save_notification_log(session_factory, task_id, result)
+
         return results
 
     async def _render_payload(
@@ -119,10 +138,7 @@ class NotificationManager:
         notification_id: UUID | None,
         session_factory,
     ) -> NotificationPayload:
-        """解析模板并渲染，返回附有 rendered_title/rendered_body 的新 payload。
-
-        无法解析或渲染失败时返回原始 payload，渠道收到未渲染的 payload 后会抛出异常。
-        """
+        """解析模板并渲染，返回附有 rendered_title/rendered_body 的新 payload。"""
         if session_factory is None or project_id is None or notification_id is None:
             return payload
 
@@ -134,9 +150,11 @@ class NotificationManager:
                 svc = NotificationTemplateService(session)
                 tpl = await svc.resolve_template(project_id, notification_id)
                 if tpl is None:
-                    logger.warning("未找到通知模板（project=%s, notification=%s），跳过通知发送", project_id, notification_id)
+                    logger.warning(
+                        "未找到通知模板（project=%s, notification=%s），跳过通知发送",
+                        project_id, notification_id,
+                    )
                     return payload
-                # 在 session 内读取模板字段，避免 detached 后访问失败
                 tpl_name = tpl.name
                 title_template = tpl.title_template
                 body_template = tpl.body_template

@@ -43,3 +43,19 @@ export function createManualReview(data) {
 export function clearAllReviews() {
   return request.delete('/reviews/all')
 }
+
+/** 重试失败的评审任务 */
+export function retryReview(id) {
+  return request.post(`/reviews/${id}/retry`)
+}
+
+/** 手动发送评审结果通知 */
+export function sendReviewNotification(id) {
+  return request.post(`/reviews/${id}/notify`)
+}
+
+/** 获取评审任务的 API 调用日志 */
+export function getReviewLogs(id) {
+  return request.get(`/reviews/${id}/logs`)
+}
+

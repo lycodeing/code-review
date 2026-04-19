@@ -48,6 +48,8 @@ class LLMReviewer(ABC):
         diff: str,
         files: list[FileChange],
         prompt_template: str,
+        task_id=None,
+        session_factory=None,
     ) -> ReviewResult:
         """执行代码评审。
 
@@ -55,6 +57,8 @@ class LLMReviewer(ABC):
             diff: 完整的 diff 内容。
             files: 变更文件列表。
             prompt_template: 渲染后的 prompt 模板文本。
+            task_id: 评审任务 UUID，有值时将调用记录写入 api_call_logs。
+            session_factory: 数据库 session 工厂，用于写日志。
 
         Returns:
             结构化的评审结果。

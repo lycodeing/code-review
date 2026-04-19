@@ -22,6 +22,20 @@ class NotificationPayload:
     rendered_body: str | None = field(default=None)
 
 
+@dataclass
+class NotificationResult:
+    """通知发送结果，携带请求/响应详情用于日志记录。"""
+    success: bool
+    provider: str
+    url: str                                    # 脱敏后的 URL
+    request_headers: dict = field(default_factory=dict)
+    request_body: dict = field(default_factory=dict)
+    response_status: int | None = None
+    response_body: dict | None = None
+    error_message: str | None = None
+    duration_ms: int = 0
+
+
 class NotificationChannel(ABC):
     """通知渠道抽象基类。"""
 
@@ -36,9 +50,10 @@ class NotificationChannel(ABC):
         """是否启用。"""
 
     @abstractmethod
-    async def send(self, payload: NotificationPayload) -> bool:
-        """发送通知，返回是否成功。"""
+    async def send(self, payload: NotificationPayload) -> NotificationResult:
+        """发送通知，返回包含请求/响应详情的结果对象。"""
 
     @abstractmethod
     async def health_check(self) -> bool:
         """检查通知渠道是否可用。"""
+
