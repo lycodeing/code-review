@@ -254,9 +254,10 @@ class ReviewOrchestrator:
                 prompt = None
                 prompt_svc = PromptTemplateService(session)
                 # 1. 尝试从项目绑定获取模板
-                prompt = await prompt_svc.get_template_for_project(task.project_id)
-                if prompt:
-                    logger.info(f"使用项目绑定的模板: {prompt.name}")
+                bound_tpl = await prompt_svc.get_template_for_project(task.project_id)
+                if bound_tpl:
+                    logger.info(f"使用项目绑定的模板: {bound_tpl.name}")
+                    prompt = bound_tpl.content
                 else:
                     # 2. 尝试从项目 config 中指定的模板名称
                     project_template_name = (

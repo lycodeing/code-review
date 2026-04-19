@@ -80,28 +80,35 @@ class DingTalkChannel(NotificationChannel):
         return url
 
     def _build_message(self, payload: NotificationPayload) -> dict:
-        """构建钉钉 Markdown 消息。"""
+        """构建钉钉 ActionCard 卡片消息。"""
+        if payload.critical_count > 0:
+            status_line = '<font color="#FF4D4F">**⚠️ 发现严重问题，请及时处理**</font>'
+        elif payload.warning_count > 0:
+            status_line = '<font color="#FA8C16">**🔔 存在警告，建议关注**</font>'
+        else:
+            status_line = '<font color="#52C41A">**✅ 代码质量良好**</font>'
+
+        summary = payload.summary.strip() if payload.summary else ""
+
         text = (
-            f"### 🔍 代码评审结果 - {payload.mr_title}\n\n"
-            f"**项目**: {payload.project_name}  \n"
-            f"**作者**: {payload.mr_author}  \n"
-            f"**MR**: [{payload.mr_title}]({payload.mr_url})  \n\n"
-            f"---  \n\n"
-            f"{payload.summary}  \n\n"
-            f"🔴 严重: **{payload.critical_count}** | "
-            f"🟡 警告: **{payload.warning_count}** | "
-            f"🔵 建议: **{payload.suggestion_count}** | "
-            f"ℹ️ 信息: **{payload.info_count}**  \n"
+            f"### {payload.mr_title}\n\n"
+            f"**{payload.mr_author}** 提交于 **{payload.project_name}**\n\n"
+            f"{status_line}\n\n"
+            f"🔴 严重 **{payload.critical_count}**　"
+            f"🟡 警告 **{payload.warning_count}**　"
+            f"🔵 建议 **{payload.suggestion_count}**　"
+            f"ℹ️ 信息 **{payload.info_count}**\n\n"
+            f"---\n\n"
+            f"{summary}"
         )
 
-        if payload.detail_link:
-            text += f"\n[查看详情]({payload.detail_link})"
-
         return {
-            "msgtype": "markdown",
-            "markdown": {
-                "title": f"代码评审结果 - {payload.mr_title}",
+            "msgtype": "actionCard",
+            "actionCard": {
+                "title": f"代码评审 · {payload.project_name}",
                 "text": text,
+                "singleTitle": "查看 MR",
+                "singleURL": payload.mr_url or payload.detail_link or "",
             },
         }
 

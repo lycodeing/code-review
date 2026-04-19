@@ -36,7 +36,7 @@ services:
       - review
       - -l
       - info
-      - --concurrency=2
+      - --concurrency=5
 
   db:
     image: postgres:16-alpine
