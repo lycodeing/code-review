@@ -7,10 +7,18 @@ serverPort = 7000
 # 部署后替换为实际 token
 auth.token = "lycodeing9527"
 
-# HTTP 隧道：把 lycodeing.cn 的请求转发到本地 8000
+# HTTP 隧道：后端 API (8000 → api.lycodeing.cn)
 [[proxies]]
-name = "code-review-web2"
+name = "code-review-api"
 type = "http"
 localIP = "127.0.0.1"
 localPort = 8000
 customDomains = ["api.lycodeing.cn"]
+
+# HTTP 隧道：前端页面 (3000 → app.lycodeing.cn)
+[[proxies]]
+name = "code-review-app"
+type = "http"
+localIP = "127.0.0.1"
+localPort = 3000
+customDomains = ["app.lycodeing.cn"]
