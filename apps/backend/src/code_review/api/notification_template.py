@@ -253,9 +253,6 @@ async def set_channel_template(channel: str, body: ChannelTemplateRequest, reque
 @binding_router.get("/{project_id}/notification-template-bindings", response_model=list[ProjectBindingResponse])
 async def get_project_notification_bindings(project_id: UUID, request: Request):
     """查询项目的通知模板绑定列表。"""
-    from sqlalchemy import select
-    from code_review.models.db import NotificationConfig
-
     session_factory = request.app.state.session_factory
     async with session_factory() as session:
         svc = NotificationTemplateService(session)

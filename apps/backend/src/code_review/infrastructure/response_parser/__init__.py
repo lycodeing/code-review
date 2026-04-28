@@ -5,7 +5,7 @@
 
 import json
 import logging
-import xml.etree.ElementTree as ET
+from xml.etree.ElementTree import ParseError as XMLParseError
 
 from code_review.core.llm import ReviewComment
 
@@ -55,7 +55,7 @@ class MultiFormatResponseParser:
                     result = parser.parse(content)
                     self._log_result(result)
                     return result
-            except (ValueError, KeyError, AttributeError, json.JSONDecodeError, ET.ParseError) as e:
+            except (ValueError, KeyError, AttributeError, json.JSONDecodeError, XMLParseError) as e:
                 logger.info(f"{parser.__class__.__name__} 失败: {e}", exc_info=True)
                 continue
 

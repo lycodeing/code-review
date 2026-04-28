@@ -7,9 +7,10 @@ from abc import ABC
 import httpx
 from tenacity import (
     retry,
+    retry_if_exception,
+    retry_if_exception_type,
     stop_after_attempt,
     wait_exponential,
-    retry_if_exception_type,
 )
 
 from code_review.core.platform import PlatformAdapter
@@ -57,7 +58,8 @@ class BasePlatformAdapter(PlatformAdapter, ABC):
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=2, max=30),
-        retry=retry_if_exception_type((httpx.TimeoutException, RateLimitError, PlatformError)),
+        retry=retry_if_exception_type((httpx.TimeoutException, RateLimitError))
+        | retry_if_exception(lambda e: isinstance(e, PlatformError) and e.status_code >= 500),
         reraise=True,
     )
     async def _request(

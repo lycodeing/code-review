@@ -398,6 +398,7 @@ class PromptTemplateService:
         if not binding:
             raise ValueError(f"绑定 {binding_id} 不存在")
         await self._session.delete(binding)
+        await self._session.commit()
 
     async def set_default_binding(self, binding_id) -> ProjectPromptBinding:
         """设置默认绑定。"""

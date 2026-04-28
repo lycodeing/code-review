@@ -176,6 +176,7 @@ class GitHubAdapter(BasePlatformAdapter):
                 }
                 if c.position.old_line:
                     rc["start_line"] = c.position.old_line
+                    rc["start_side"] = "LEFT"
                 review_comments.append(rc)
 
             data = await self._request(

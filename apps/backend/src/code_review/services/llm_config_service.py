@@ -185,6 +185,7 @@ class LLMConfigService:
         if not config:
             raise ValueError(f"配置 {config_id} 不存在")
         await self._session.delete(config)
+        await self._session.commit()
 
     async def get_llm_config_for_project(
         self, project_id: UUID
@@ -377,6 +378,7 @@ class LLMConfigService:
         if not binding:
             raise ValueError(f"绑定 {binding_id} 不存在")
         await self._session.delete(binding)
+        await self._session.commit()
 
     async def set_default_binding(self, binding_id: UUID) -> ProjectLLMBinding:
         """设置默认绑定。
