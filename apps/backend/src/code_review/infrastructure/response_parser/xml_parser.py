@@ -1,7 +1,7 @@
 """XML 格式 LLM 响应解析器。"""
 
 import logging
-import xml.etree.ElementTree as ET
+import defusedxml.ElementTree as ET
 
 from code_review.core.llm import ReviewComment, Severity
 from .base import ResponseParser, ParsedReview, ResponseFormat

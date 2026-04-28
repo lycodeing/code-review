@@ -4,7 +4,7 @@
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import UUID
 
 from sqlalchemy import select, func
@@ -244,7 +244,7 @@ class PromptTemplateService:
             tpl.locale = locale
         if enabled is not None:
             tpl.enabled = enabled
-        tpl.updated_at = datetime.utcnow()
+        tpl.updated_at = datetime.now(timezone.utc)
         await self._session.commit()
         await self._session.refresh(tpl)
         return tpl
@@ -347,7 +347,7 @@ class PromptTemplateService:
             priority=priority,
         )
         self._session.add(binding)
-        await self._session.flush()
+        await self._session.commit()
         await self._session.refresh(binding)
         return binding
 
@@ -384,7 +384,7 @@ class PromptTemplateService:
         if enabled is not None:
             binding.enabled = enabled
 
-        await self._session.flush()
+        await self._session.commit()
         await self._session.refresh(binding)
         return binding
 
@@ -420,7 +420,7 @@ class PromptTemplateService:
             b.is_default = False
 
         binding.is_default = True
-        await self._session.flush()
+        await self._session.commit()
         await self._session.refresh(binding)
         return binding
 

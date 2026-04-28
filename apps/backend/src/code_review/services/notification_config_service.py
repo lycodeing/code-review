@@ -1,7 +1,7 @@
 """通知渠道配置 CRUD 服务 + 缓存。"""
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -135,7 +135,7 @@ class NotificationConfigService:
                 value = encrypt(value, self._secret_key)
             setattr(nc, key, value)
 
-        nc.updated_at = datetime.utcnow()
+        nc.updated_at = datetime.now(timezone.utc)
         await self._session.commit()
         await self._session.refresh(nc)
         self._decrypt_sensitive(nc)
@@ -176,7 +176,7 @@ class NotificationConfigService:
                             existing.secret = encrypt(cfg["secret"], self._secret_key)
                         if "enabled" in cfg:
                             existing.enabled = cfg["enabled"]
-                        existing.updated_at = datetime.utcnow()
+                        existing.updated_at = datetime.now(timezone.utc)
                         imported += 1
                     else:
                         skipped += 1

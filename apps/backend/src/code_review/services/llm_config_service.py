@@ -116,7 +116,7 @@ class LLMConfigService:
             description=description,
         )
         self._session.add(config)
-        await self._session.flush()
+        await self._session.commit()
         await self._session.refresh(config)
         return config
 
@@ -171,7 +171,7 @@ class LLMConfigService:
         if description is not None:
             config.description = description
 
-        await self._session.flush()
+        await self._session.commit()
         await self._session.refresh(config)
         return config
 
@@ -319,7 +319,7 @@ class LLMConfigService:
             priority=priority,
         )
         self._session.add(binding)
-        await self._session.flush()
+        await self._session.commit()
         await self._session.refresh(binding)
         return binding
 
@@ -363,7 +363,7 @@ class LLMConfigService:
         if enabled is not None:
             binding.enabled = enabled
 
-        await self._session.flush()
+        await self._session.commit()
         await self._session.refresh(binding)
         return binding
 
@@ -402,6 +402,6 @@ class LLMConfigService:
             b.is_default = False
 
         binding.is_default = True
-        await self._session.flush()
+        await self._session.commit()
         await self._session.refresh(binding)
         return binding

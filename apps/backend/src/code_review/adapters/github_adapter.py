@@ -137,6 +137,7 @@ class GitHubAdapter(BasePlatformAdapter):
             }
             if comment.position.old_line:
                 payload["start_line"] = comment.position.old_line
+                payload["start_side"] = "LEFT"
             data = await self._request(
                 "POST",
                 f"/repos/{owner}/{repo}/pulls/{mr_iid}/comments",

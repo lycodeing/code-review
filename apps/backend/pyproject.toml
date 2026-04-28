@@ -43,6 +43,9 @@ dependencies = [
     # 加密
     "cryptography>=43.0.0",
 
+    # XML 安全解析
+    "defusedxml>=0.7.1",
+
     # 邮件
     "aiosmtplib>=3.0.2",
 ]

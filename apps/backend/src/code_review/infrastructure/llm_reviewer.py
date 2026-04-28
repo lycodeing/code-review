@@ -195,7 +195,7 @@ class LiteLLMReviewer(LLMReviewer):
             if self._config.api_key:
                 kwargs["api_key"] = self._config.api_key
             if self._config.api_base:
-                kwargs["api_base"] = self._config.api_base
+                kwargs["base_url"] = self._config.api_base
             response = await litellm.acompletion(**kwargs)
             return bool(response.choices)
         except Exception as e:

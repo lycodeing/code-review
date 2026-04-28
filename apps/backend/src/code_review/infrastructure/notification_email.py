@@ -6,7 +6,7 @@ from email.mime.multipart import MIMEMultipart
 
 import aiosmtplib
 
-from code_review.core.notification import NotificationChannel, NotificationPayload
+from code_review.core.notification import NotificationChannel, NotificationPayload, NotificationResult
 from code_review.models.config import EmailConfig
 
 logger = logging.getLogger(__name__)
@@ -26,9 +26,12 @@ class EmailChannel(NotificationChannel):
     def enabled(self) -> bool:
         return self._config.enabled and bool(self._config.smtp_host)
 
-    async def send(self, payload: NotificationPayload) -> bool:
+    async def send(self, payload: NotificationPayload) -> NotificationResult:
         if not self.enabled:
-            return False
+            return NotificationResult(
+                success=False, provider="email", url="",
+                error_message="邮件通知渠道未启用",
+            )
 
         try:
             message = self._build_message(payload)
@@ -43,11 +46,17 @@ class EmailChannel(NotificationChannel):
             )
 
             logger.info("Email notification sent for MR: %s", payload.mr_title)
-            return True
+            return NotificationResult(
+                success=True, provider="email",
+                url=f"smtp://{self._config.smtp_host}",
+            )
 
         except Exception as e:
             logger.error("Failed to send email notification: %s", e)
-            return False
+            return NotificationResult(
+                success=False, provider="email", url="",
+                error_message=str(e),
+            )
 
     def _build_message(self, payload: NotificationPayload) -> MIMEMultipart:
         msg = MIMEMultipart("alternative")

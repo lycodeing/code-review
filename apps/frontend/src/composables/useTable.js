@@ -43,12 +43,14 @@ export function useTable(fetchApi, defaultPageSize = 20) {
   /** 页码变化 */
   function handlePageChange(page) {
     pagination.page = page
+    loadData()
   }
 
   /** 每页条数变化 */
   function handleSizeChange(size) {
     pagination.pageSize = size
     pagination.page = 1
+    loadData()
   }
 
   /** 重置分页 */

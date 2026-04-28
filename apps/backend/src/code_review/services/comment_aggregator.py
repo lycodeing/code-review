@@ -62,7 +62,7 @@ class AggregatedComment:
             lines = []
             if prose:
                 lines.append(f"{prose}：")
-            lines.append("```java")
+            lines.append("```")
             lines.append(code_snippet)
             lines.append("```")
             return "\n".join(lines)

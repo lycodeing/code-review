@@ -1,7 +1,7 @@
 """平台配置 CRUD 服务 + 缓存 + 降级。"""
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import select
@@ -159,7 +159,7 @@ class PlatformConfigService:
                 value = encrypt(value, self._secret_key)
             setattr(pc, key, value)
 
-        pc.updated_at = datetime.utcnow()
+        pc.updated_at = datetime.now(timezone.utc)
         await self._session.commit()
         await self._session.refresh(pc)
         self._decrypt_sensitive(pc)
@@ -201,7 +201,7 @@ class PlatformConfigService:
                                 setattr(existing, key, val)
                         if "enabled" in cfg:
                             existing.enabled = cfg["enabled"]
-                        existing.updated_at = datetime.utcnow()
+                        existing.updated_at = datetime.now(timezone.utc)
                         imported += 1
                     else:
                         skipped += 1
@@ -247,10 +247,10 @@ class PlatformConfigService:
         if pc.webhook_secret and self._secret_key:
             pc.webhook_secret = decrypt(pc.webhook_secret, self._secret_key)
 
-    @staticmethod
-    def _decrypt_notification_secret(nc: NotificationConfig) -> None:
-        """解密通知渠道密钥（由 NotificationConfigService 调用）。"""
-        pass
+    def _decrypt_notification_secret(self, nc: NotificationConfig) -> None:
+        """解密通知渠道密钥。"""
+        if nc.secret and self._secret_key:
+            nc.secret = decrypt(nc.secret, self._secret_key)
 
     @staticmethod
     def _now() -> float:

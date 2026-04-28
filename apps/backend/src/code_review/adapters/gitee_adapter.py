@@ -83,7 +83,7 @@ class GiteeAdapter(BasePlatformAdapter):
         )
         changes = []
         for f in data:
-            status_map = {"added": "added", "modified": "modified", "removed": "removed"}
+            status_map = {"added": "added", "modified": "modified", "removed": "removed", "renamed": "renamed"}
             # Gitee API 返回 patch 可能是 dict（包含 diff 键）或 str
             raw_patch = f.get("patch", "")
             if isinstance(raw_patch, dict):
@@ -92,6 +92,7 @@ class GiteeAdapter(BasePlatformAdapter):
                 patch_text = raw_patch if isinstance(raw_patch, str) else ""
             changes.append(FileChange(
                 path=f["filename"],
+                old_path=f.get("previous_filename"),
                 added=f.get("additions", 0),
                 deleted=f.get("deletions", 0),
                 status=status_map.get(f.get("status", "modified"), "modified"),

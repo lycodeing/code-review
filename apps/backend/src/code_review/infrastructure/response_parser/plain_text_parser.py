@@ -66,7 +66,6 @@ class PlainTextParser(ResponseParser):
 
         if not comments:
             warnings.append("未能从文本中提取任何评审意见")
-            raise ValueError("纯文本解析器未能提取任何评审意见")
 
         logger.info(f"纯文本解析完成: {len(comments)} 条评审意见")
         return ParsedReview(

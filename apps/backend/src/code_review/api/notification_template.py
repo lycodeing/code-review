@@ -260,36 +260,7 @@ async def get_project_notification_bindings(project_id: UUID, request: Request):
     async with session_factory() as session:
         svc = NotificationTemplateService(session)
         bindings = await svc.get_project_bindings(project_id)
-
-        # 补充冗余字段
-        response_items: list[ProjectBindingResponse] = []
-        for b in bindings:
-            channel_name: str | None = None
-            template_name: str | None = None
-
-            nc = await session.get(NotificationConfig, b.notification_id)
-            if nc:
-                channel_name = nc.channel
-
-            if b.template_id:
-                from code_review.models.db import NotificationTemplate as NT
-                tpl = await session.get(NT, b.template_id)
-                if tpl:
-                    template_name = tpl.name
-
-            response_items.append(
-                ProjectBindingResponse(
-                    id=b.id,
-                    project_id=b.project_id,
-                    notification_id=b.notification_id,
-                    template_id=b.template_id,
-                    enabled=b.enabled,
-                    created_at=b.created_at,
-                    channel=channel_name,
-                    template_name=template_name,
-                )
-            )
-        return response_items
+        return await _enrich_bindings(session, bindings)
 
 
 @binding_router.put("/{project_id}/notification-template-bindings", response_model=list[ProjectBindingResponse])
@@ -299,40 +270,48 @@ async def upsert_project_notification_bindings(
     request: Request,
 ):
     """批量设置项目的通知模板绑定（upsert：已存在则更新，不存在则创建）。"""
-    from sqlalchemy import select
-    from code_review.models.db import NotificationConfig
-
     session_factory = request.app.state.session_factory
     async with session_factory() as session:
         svc = NotificationTemplateService(session)
         bindings_data = [item.model_dump() for item in body]
         bindings = await svc.upsert_project_bindings(project_id, bindings_data)
+        return await _enrich_bindings(session, bindings)
 
-        response_items: list[ProjectBindingResponse] = []
-        for b in bindings:
-            channel_name: str | None = None
-            template_name: str | None = None
 
-            nc = await session.get(NotificationConfig, b.notification_id)
-            if nc:
-                channel_name = nc.channel
+async def _enrich_bindings(
+    session, bindings: list[ProjectNotificationTemplateBinding]
+) -> list[ProjectBindingResponse]:
+    """批量查询关联的渠道和模板名称，避免 N+1。"""
+    from sqlalchemy import select
+    from code_review.models.db import NotificationConfig, NotificationTemplate as NT
 
-            if b.template_id:
-                from code_review.models.db import NotificationTemplate as NT
-                tpl = await session.get(NT, b.template_id)
-                if tpl:
-                    template_name = tpl.name
+    notification_ids = [b.notification_id for b in bindings]
+    template_ids = [b.template_id for b in bindings if b.template_id]
 
-            response_items.append(
-                ProjectBindingResponse(
-                    id=b.id,
-                    project_id=b.project_id,
-                    notification_id=b.notification_id,
-                    template_id=b.template_id,
-                    enabled=b.enabled,
-                    created_at=b.created_at,
-                    channel=channel_name,
-                    template_name=template_name,
-                )
-            )
-        return response_items
+    nc_map: dict[UUID, str] = {}
+    if notification_ids:
+        result = await session.execute(
+            select(NotificationConfig).where(NotificationConfig.id.in_(notification_ids))
+        )
+        nc_map = {nc.id: nc.channel for nc in result.scalars().all()}
+
+    tpl_map: dict[UUID, str] = {}
+    if template_ids:
+        result = await session.execute(
+            select(NT).where(NT.id.in_(template_ids))
+        )
+        tpl_map = {t.id: t.name for t in result.scalars().all()}
+
+    return [
+        ProjectBindingResponse(
+            id=b.id,
+            project_id=b.project_id,
+            notification_id=b.notification_id,
+            template_id=b.template_id,
+            enabled=b.enabled,
+            created_at=b.created_at,
+            channel=nc_map.get(b.notification_id),
+            template_name=tpl_map.get(b.template_id) if b.template_id else None,
+        )
+        for b in bindings
+    ]
