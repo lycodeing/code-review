@@ -21,7 +21,9 @@ async def update_comment_feedback(
     request: Request,
 ):
     if body.feedback not in (None, "thumbs_up", "thumbs_down"):
-        raise HTTPException(status_code=422, detail="feedback 值必须为 thumbs_up、thumbs_down 或 null")
+        raise HTTPException(
+            status_code=422, detail="feedback 值必须为 thumbs_up、thumbs_down 或 null",
+        )
 
     session_factory = request.app.state.session_factory
     async with session_factory() as session:

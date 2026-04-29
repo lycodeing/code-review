@@ -1,19 +1,19 @@
 """仪表盘统计 API。"""
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Query, Request
-from sqlalchemy import select, func, case, cast, Date
+from sqlalchemy import Date, cast, func, select
 
-from code_review.models.db import ReviewTask, ReviewComment, Project, ApiCallLog
+from code_review.models.db import ApiCallLog, Project, ReviewComment, ReviewTask
 
 router = APIRouter(prefix="/api/v1/dashboard", tags=["dashboard"])
 
 
 def _period_start(period: str, start_date: str | None = None, end_date: str | None = None) -> datetime | None:
     if period == "custom" and start_date:
-        return datetime.fromisoformat(start_date).replace(tzinfo=timezone.utc)
-    now = datetime.now(timezone.utc)
+        return datetime.fromisoformat(start_date).replace(tzinfo=UTC)
+    now = datetime.now(UTC)
     if period == "week":
         return (now - timedelta(days=now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
     if period == "month":
@@ -45,7 +45,7 @@ async def dashboard_stats(
         sd = _period_start(period, start_date, end_date)
         period_filter = ReviewTask.created_at >= sd if sd else True
         if period == "custom" and end_date:
-            ed = datetime.fromisoformat(end_date).replace(tzinfo=timezone.utc)
+            ed = datetime.fromisoformat(end_date).replace(tzinfo=UTC)
             period_filter = period_filter & (ReviewTask.created_at <= ed)
 
         period_stmt = select(
@@ -120,7 +120,7 @@ async def dashboard_trend(
     days: int = Query(14, ge=1, le=90),
 ):
     session_factory = request.app.state.session_factory
-    since = datetime.now(timezone.utc) - timedelta(days=days)
+    since = datetime.now(UTC) - timedelta(days=days)
 
     async with session_factory() as session:
         stmt = (
@@ -156,7 +156,7 @@ async def dashboard_trend(
 async def dashboard_cost_analysis(request: Request):
     """LLM 成本与效率分析：按项目、按模型、每日趋势及平均评审耗时。"""
     session_factory = request.app.state.session_factory
-    since_30d = datetime.now(timezone.utc) - timedelta(days=30)
+    since_30d = datetime.now(UTC) - timedelta(days=30)
 
     async with session_factory() as session:
         by_project_stmt = (
