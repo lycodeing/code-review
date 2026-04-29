@@ -58,6 +58,10 @@
             <el-icon><Cpu /></el-icon>
             <template #title>LLM 配置</template>
           </el-menu-item>
+          <el-menu-item index="/review-rules">
+            <el-icon><Filter /></el-icon>
+            <template #title>评审规则</template>
+          </el-menu-item>
         </el-sub-menu>
 
         <el-menu-item index="/request-history">
@@ -72,7 +76,7 @@
 <script setup>
 import { useRoute } from 'vue-router'
 import { useAppStore } from '@/stores/app'
-import { Cpu, ChatDotSquare, List } from '@element-plus/icons-vue'
+import { Cpu, ChatDotSquare, Filter, List } from '@element-plus/icons-vue'
 
 const route = useRoute()
 const appStore = useAppStore()
