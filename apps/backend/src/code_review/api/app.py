@@ -237,7 +237,8 @@ async def _timeout_check_loop(session_factory, timeout_seconds: int, stop_event:
     while not stop_event.is_set():
         try:
             async with session_factory() as session:
-                now = now_cst()
+                # 数据库列为 timestamp without time zone，使用 naive datetime 比较
+                now = now_cst().replace(tzinfo=None)
                 cutoff = now - timedelta(seconds=timeout_seconds)
                 stmt = select(ReviewTask).where(
                     ReviewTask.status == ReviewTask.Status.IN_PROGRESS,

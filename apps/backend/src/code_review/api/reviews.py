@@ -661,7 +661,8 @@ async def check_review_timeouts(request: Request):
     timeout_seconds = config.review.review_timeout_seconds
 
     async with session_factory() as session:
-        now = now_cst()
+        # 数据库列为 timestamp without time zone，使用 naive datetime 比较
+        now = now_cst().replace(tzinfo=None)
         cutoff = now - timedelta(seconds=timeout_seconds)
 
         stmt = select(ReviewTask).where(
