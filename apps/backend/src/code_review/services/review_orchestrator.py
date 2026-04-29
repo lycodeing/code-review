@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from fnmatch import fnmatch
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from code_review.adapters.factory import create_adapter
@@ -118,8 +118,9 @@ class ReviewOrchestrator:
         """处理 Webhook 事件入口。
 
         1. 查找项目配置
-        2. 创建评审任务
-        3. 分发到 Celery 异步执行
+        2. 查找或创建主记录（同一 PR 复用）
+        3. 创建子版本记录（后续 push）
+        4. 分发到 Celery 异步执行
 
         注意：去重检查已在 webhook 端点层完成，此处不再重复检查。
         """
@@ -163,17 +164,68 @@ class ReviewOrchestrator:
                 )
                 return None
 
-            # 创建评审任务记录
-            task = ReviewTask(
-                project_id=project.id,
-                mr_iid=event.mr_iid,
-                event_id=event.event_id,
-                trigger_action=event.action,
-                mr_title=event.mr_title,
-                mr_author=event.mr_author,
-                mr_url=event.mr_url,
-                status=ReviewTask.Status.PENDING,
+            # 查找该 PR 是否已有主记录
+            existing = await session.execute(
+                select(ReviewTask).where(
+                    ReviewTask.project_id == project.id,
+                    ReviewTask.mr_iid == event.mr_iid,
+                    ReviewTask.parent_id.is_(None),
+                )
             )
+            parent_task = existing.scalar_one_or_none()
+
+            if parent_task:
+                # 已有主记录：将旧的 is_latest 标记清除，创建子版本
+                parent_task.is_latest = False
+                # 更新主记录的 MR 元信息（保持最新）
+                parent_task.mr_title = event.mr_title or parent_task.mr_title
+                parent_task.mr_author = event.mr_author or parent_task.mr_author
+                parent_task.mr_url = event.mr_url or parent_task.mr_url
+                parent_task.source_branch = event.source_branch or parent_task.source_branch
+                parent_task.target_branch = event.target_branch or parent_task.target_branch
+
+                # 计算新的 revision 号
+                revision_stmt = select(
+                    func.count()
+                ).where(
+                    ReviewTask.parent_id == parent_task.id,
+                )
+                child_count = (await session.execute(revision_stmt)).scalar() or 0
+                new_revision = child_count + 1
+
+                task = ReviewTask(
+                    project_id=project.id,
+                    mr_iid=event.mr_iid,
+                    event_id=event.event_id,
+                    trigger_action=event.action,
+                    mr_title=event.mr_title,
+                    mr_author=event.mr_author,
+                    mr_url=event.mr_url,
+                    source_branch=event.source_branch,
+                    target_branch=event.target_branch,
+                    status=ReviewTask.Status.PENDING,
+                    parent_id=parent_task.id,
+                    revision=new_revision,
+                    is_latest=True,
+                )
+            else:
+                # 首次创建主记录
+                task = ReviewTask(
+                    project_id=project.id,
+                    mr_iid=event.mr_iid,
+                    event_id=event.event_id,
+                    trigger_action=event.action,
+                    mr_title=event.mr_title,
+                    mr_author=event.mr_author,
+                    mr_url=event.mr_url,
+                    source_branch=event.source_branch,
+                    target_branch=event.target_branch,
+                    status=ReviewTask.Status.PENDING,
+                    parent_id=None,
+                    revision=1,
+                    is_latest=True,
+                )
+
             session.add(task)
             await session.commit()
             await session.refresh(task)

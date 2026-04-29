@@ -6,7 +6,28 @@
         <StatusTag v-if="detail.status" :status="detail.status" style="margin-left: 8px" />
       </template>
       <template #extra>
-        <div style="display: flex; gap: 8px">
+        <div style="display: flex; gap: 8px; align-items: center">
+          <el-select
+            v-if="revisions.length > 1"
+            v-model="selectedRevision"
+            placeholder="选择版本"
+            size="small"
+            style="width: 160px"
+            @change="handleRevisionChange"
+          >
+            <el-option
+              v-for="rev in revisions"
+              :key="rev.id"
+              :label="`#${rev.revision} - ${formatDateTime(rev.created_at)}`"
+              :value="rev.revision"
+            >
+              <div style="display: flex; justify-content: space-between; align-items: center">
+                <span>#{{ rev.revision }}</span>
+                <span style="color: #909399; font-size: 12px">{{ rev.trigger_action }}</span>
+                <StatusTag :status="rev.status" type="severity" />
+              </div>
+            </el-option>
+          </el-select>
           <el-button
             v-if="detail.status === 'failed'"
             type="warning"
@@ -250,7 +271,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { RefreshRight, Bell, Document } from '@element-plus/icons-vue'
-import { getReview, getReviewComments, retryReview, sendReviewNotification, updateCommentFeedback } from '@/api/reviews'
+import { getReview, getReviewComments, retryReview, sendReviewNotification, updateCommentFeedback, getReviewRevisions } from '@/api/reviews'
 import { getReviewLogs } from '@/api/logs'
 import { formatDateTime } from '@/utils/format'
 import { renderMarkdown } from '@/utils/markdown'
@@ -266,6 +287,8 @@ const logsLoading = ref(false)
 const activeTab = ref('info')
 const retrying = ref(false)
 const notifying = ref(false)
+const revisions = ref([])
+const selectedRevision = ref(null)
 
 // 日志抽屉
 const logDrawerVisible = ref(false)
@@ -339,14 +362,59 @@ async function loadDetail() {
   loading.value = true
   try {
     const id = route.params.id
-    const [taskData, commentsData, logsData] = await Promise.all([
+    const [taskData, revisionsData] = await Promise.all([
       getReview(id),
-      getReviewComments(id),
-      getReviewLogs(id)
+      getReviewRevisions(id),
     ])
     detail.value = taskData
-    comments.value = Array.isArray(commentsData) ? commentsData : []
-    logs.value = Array.isArray(logsData) ? logsData : []
+    revisions.value = Array.isArray(revisionsData) ? revisionsData : []
+
+    // 如果有子版本，默认选中最新的
+    if (revisions.value.length > 1) {
+      const latest = revisions.value.reduce((a, b) => (a.revision > b.revision ? a : b))
+      selectedRevision.value = latest.revision
+    }
+
+    // 加载最新版本的 comments 和 logs
+    await loadRevisionData(selectedRevision.value)
+  } catch {
+    // 拦截器已处理
+  } finally {
+    loading.value = false
+  }
+}
+
+async function loadRevisionData(revision) {
+  const id = route.params.id
+  const params = revision && revisions.value.length > 1 ? revision : undefined
+  const [commentsData, logsData] = await Promise.all([
+    getReviewComments(id, params),
+    getReviewLogs(id, params),
+  ])
+  comments.value = Array.isArray(commentsData) ? commentsData : []
+  logs.value = Array.isArray(logsData) ? logsData : []
+}
+
+async function handleRevisionChange(revision) {
+  loading.value = true
+  try {
+    await loadRevisionData(revision)
+    // 更新详情中的版本相关信息
+    const revTask = revisions.value.find(r => r.revision === revision)
+    if (revTask) {
+      detail.value = { ...detail.value, ...{
+        status: revTask.status,
+        trigger_action: revTask.trigger_action,
+        model_name: revTask.model_name,
+        total_comments: revTask.total_comments,
+        critical_count: revTask.critical_count,
+        warning_count: revTask.warning_count,
+        summary: revTask.summary,
+        error_message: revTask.error_message,
+        started_at: revTask.started_at,
+        completed_at: revTask.completed_at,
+      }}
+    }
   } catch {
     // 拦截器已处理
   } finally {
@@ -357,7 +425,8 @@ async function loadDetail() {
 async function loadLogs() {
   logsLoading.value = true
   try {
-    const data = await getReviewLogs(route.params.id)
+    const params = selectedRevision.value && revisions.value.length > 1 ? selectedRevision.value : undefined
+    const data = await getReviewLogs(route.params.id, params)
     logs.value = Array.isArray(data) ? data : []
   } catch {
     // ignore

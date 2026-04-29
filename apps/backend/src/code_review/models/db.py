@@ -77,13 +77,30 @@ class ReviewTask(Base):
     started_at = Column(DateTime(timezone=True), nullable=True)
     completed_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(tz=timezone.utc))
+    parent_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("review_tasks.id", ondelete="CASCADE"),
+        nullable=True,
+        comment="父记录 ID（NULL 为主记录，非 NULL 为子版本）",
+    )
+    revision = Column(Integer, nullable=False, default=1, comment="版本号（第几次 push）")
+    is_latest = Column(Boolean, nullable=False, default=True, comment="是否为最新版本")
 
     project = relationship("Project", back_populates="reviews")
     comments = relationship("ReviewComment", back_populates="task", cascade="all, delete-orphan")
+    parent = relationship("ReviewTask", remote_side="ReviewTask.id", back_populates="children")
+    children = relationship(
+        "ReviewTask",
+        back_populates="parent",
+        cascade="all, delete-orphan",
+        order_by="ReviewTask.revision",
+    )
 
     __table_args__ = (
         UniqueConstraint("project_id", "mr_iid", "event_id", name="uq_review_event"),
         Index("ix_review_status", "status"),
+        Index("ix_review_parent_id", "parent_id"),
+        Index("ix_review_is_latest", "project_id", "mr_iid"),
     )
 
     def __repr__(self) -> str:

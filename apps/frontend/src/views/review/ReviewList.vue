@@ -99,6 +99,12 @@
           </template>
         </el-table-column>
         <el-table-column prop="model_name" label="模型" width="140" show-overflow-tooltip />
+        <el-table-column prop="revision" label="版本" width="70" align="center">
+          <template #default="{ row }">
+            <el-tag v-if="row.revision > 1" size="small" type="info">#{{ row.revision }}</el-tag>
+            <span v-else>-</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="created_at" label="创建时间" width="175">
           <template #default="{ row }">{{ formatDateTime(row.created_at) }}</template>
         </el-table-column>
@@ -241,14 +247,10 @@ const filters = ref({
   keyword: ''
 })
 
-const { loading, tableData, total, pagination, loadData, handlePageChange, handleSizeChange } = useTable(getReviews)
+const { loading, tableData, total, pagination, loadData, handlePageChange, handleSizeChange } = useTable(getReviews, 20)
 
 const filteredData = computed(() => {
-  let data = tableData.value
-  if (filters.value.keyword) {
-    data = data.filter((r) => r.mr_title?.includes(filters.value.keyword))
-  }
-  return data
+  return tableData.value
 })
 
 // 批量选择
