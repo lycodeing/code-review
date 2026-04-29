@@ -1,3 +1,17 @@
+# ============================================================
+# 阶段 1：构建前端
+# ============================================================
+FROM node:20-alpine AS frontend-builder
+
+WORKDIR /build
+COPY apps/frontend/package.json apps/frontend/package-lock.json* ./
+RUN npm install
+COPY apps/frontend/ ./
+RUN npm run build
+
+# ============================================================
+# 阶段 2：构建后端 + 前端产物
+# ============================================================
 FROM python:3.12-slim
 
 WORKDIR /app
@@ -11,17 +25,20 @@ RUN apt-get update && \
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 # 优先复制依赖声明，安装所有依赖
-# 在代码变更时，依赖层不会重新构建（层缓存优化）
-COPY pyproject.toml uv.lock ./
+COPY apps/backend/pyproject.toml apps/backend/uv.lock ./
 RUN mkdir -p src/code_review && touch src/code_review/__init__.py && \
     uv pip install --system --no-cache . && \
     rm -rf src/code_review
 
-# 复制源代码（PYTHONPATH 优先于 site-packages，使用实际代码）
-COPY src/ src/
+# 复制后端源代码
+COPY apps/backend/src/ src/
+
+# 复制前端构建产物
+COPY --from=frontend-builder /build/dist /app/frontend/dist
 
 ENV PYTHONPATH=/app/src
 ENV PYTHONUNBUFFERED=1
+ENV STATIC_DIR=/app/frontend/dist
 
 EXPOSE 8000
 

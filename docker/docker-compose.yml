@@ -1,7 +1,7 @@
 x-backend: &backend
   build:
-    context: ../apps/backend
-    dockerfile: Dockerfile
+    context: ..
+    dockerfile: apps/backend/Dockerfile
   env_file:
     - path: ../apps/backend/configs/.env
       required: false
