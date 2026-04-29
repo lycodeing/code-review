@@ -8,3 +8,7 @@ export function getDashboardStats(params = {}) {
 export function getDashboardTrend(days = 14) {
   return request.get('/dashboard/trend', { params: { days } })
 }
+
+export function getCostAnalysis() {
+  return request.get('/dashboard/cost-analysis')
+}

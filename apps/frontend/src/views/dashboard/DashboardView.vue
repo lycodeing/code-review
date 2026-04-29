@@ -114,6 +114,43 @@
       </el-col>
     </el-row>
 
+    <!-- 成本分析 -->
+    <el-row :gutter="16" style="margin-top: 16px">
+      <el-col :xs="24" :lg="16">
+        <div class="chart-card">
+          <div class="card-header"><span class="card-title">近 30 天 LLM 调用趋势</span></div>
+          <div class="chart-wrapper">
+            <v-chart :option="costTrendOption" autoresize style="height: 280px" />
+          </div>
+        </div>
+      </el-col>
+      <el-col :xs="24" :lg="8">
+        <div class="chart-card">
+          <div class="card-header"><span class="card-title">按模型调用分布</span></div>
+          <div class="chart-wrapper">
+            <v-chart :option="costByModelOption" autoresize style="height: 280px" />
+          </div>
+        </div>
+      </el-col>
+    </el-row>
+    <el-row :gutter="16" style="margin-top: 16px">
+      <el-col :xs="24" :lg="16">
+        <div class="chart-card">
+          <div class="card-header"><span class="card-title">按项目 LLM 调用次数</span></div>
+          <div class="chart-wrapper">
+            <v-chart :option="costByProjectOption" autoresize style="height: 280px" />
+          </div>
+        </div>
+      </el-col>
+      <el-col :xs="24" :lg="8">
+        <div class="chart-card" style="display: flex; flex-direction: column; justify-content: center; align-items: center; min-height: 280px">
+          <div class="card-title" style="margin-bottom: 16px">平均评审耗时</div>
+          <div style="font-size: 36px; font-weight: 700; color: #409EFF">{{ avgDurationText }}</div>
+          <div style="color: #909399; margin-top: 8px">已完成评审的平均耗时</div>
+        </div>
+      </el-col>
+    </el-row>
+
     <!-- 系统状态 -->
     <el-row :gutter="16" style="margin-top: 16px">
       <el-col :span="24">
@@ -150,7 +187,7 @@ import {
   GridComponent,
   LegendComponent
 } from 'echarts/components'
-import { getDashboardStats, getDashboardTrend } from '@/api/dashboard'
+import { getDashboardStats, getDashboardTrend, getCostAnalysis } from '@/api/dashboard'
 import { getReviews } from '@/api/reviews'
 import { formatDateTime } from '@/utils/format'
 import StatusTag from '@/components/common/StatusTag.vue'
@@ -164,6 +201,7 @@ const statsData = ref(null)
 const trendData = ref([])
 const recentReviews = ref([])
 const customRange = ref(null)
+const costData = ref(null)
 
 const statCards = computed(() => {
   const o = statsData.value?.overview || {}
@@ -260,6 +298,66 @@ const healthLoading = ref(false)
 const healthData = ref({})
 const healthLabels = { database: '数据库', notifications: '通知服务' }
 
+// 成本分析图表
+const avgDurationText = computed(() => {
+  const ms = costData.value?.avg_review_duration_ms || 0
+  if (ms < 1000) return `${ms} ms`
+  return `${(ms / 1000).toFixed(1)} s`
+})
+
+const costTrendOption = computed(() => {
+  const trend = costData.value?.daily_trend || []
+  return {
+    tooltip: { trigger: 'axis' },
+    grid: { left: 40, right: 20, top: 20, bottom: 40 },
+    xAxis: { type: 'category', data: trend.map(d => d.date.slice(5)), axisLabel: { color: '#909399' } },
+    yAxis: { type: 'value', minInterval: 1, axisLabel: { color: '#909399' }, splitLine: { lineStyle: { color: '#f0f0f0' } } },
+    series: [{
+      type: 'line', data: trend.map(d => d.call_count), smooth: true, symbol: 'circle', symbolSize: 5,
+      lineStyle: { width: 2, color: '#409EFF' },
+      areaStyle: { color: { type: 'linear', x: 0, y: 0, x2: 0, y2: 1, colorStops: [{ offset: 0, color: 'rgba(64,158,255,0.25)' }, { offset: 1, color: 'rgba(64,158,255,0.02)' }] } },
+      itemStyle: { color: '#409EFF' },
+    }],
+  }
+})
+
+const costByModelOption = computed(() => {
+  const models = costData.value?.by_model || []
+  const colors = ['#409EFF', '#67C23A', '#E6A23C', '#F56C6C', '#909399']
+  return {
+    tooltip: { trigger: 'item', formatter: '{b}: {c} 次 ({d}%)' },
+    legend: { bottom: 0, textStyle: { color: '#909399' } },
+    series: [{
+      type: 'pie', radius: ['40%', '70%'], center: ['50%', '45%'],
+      itemStyle: { borderRadius: 6, borderColor: '#fff', borderWidth: 2 },
+      label: { show: false },
+      data: models.map((m, i) => ({ name: m.provider, value: m.total_calls, itemStyle: { color: colors[i % colors.length] } })),
+    }],
+  }
+})
+
+const costByProjectOption = computed(() => {
+  const projects = costData.value?.by_project || []
+  return {
+    tooltip: { trigger: 'axis' },
+    grid: { left: 100, right: 20, top: 10, bottom: 20 },
+    xAxis: { type: 'value', minInterval: 1, axisLabel: { color: '#909399' } },
+    yAxis: { type: 'category', data: projects.map(p => p.project_name).reverse(), axisLabel: { color: '#606266' } },
+    series: [{
+      type: 'bar', data: projects.map(p => p.total_calls).reverse(),
+      itemStyle: { color: '#409EFF', borderRadius: [0, 4, 4, 0] },
+    }],
+  }
+})
+
+async function loadCostAnalysis() {
+  try {
+    costData.value = await getCostAnalysis()
+  } catch {
+    costData.value = null
+  }
+}
+
 async function checkHealth() {
   healthLoading.value = true
   try {
@@ -313,6 +411,7 @@ onMounted(() => {
   loadStats()
   loadTrend()
   loadRecent()
+  loadCostAnalysis()
   checkHealth()
 })
 </script>
