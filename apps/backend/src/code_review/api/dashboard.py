@@ -199,9 +199,13 @@ async def dashboard_cost_analysis(request: Request):
 
         avg_stmt = select(
             func.avg(
-                func.extract("epoch", ReviewTask.completed_at - ReviewTask.created_at) * 1000
+                func.extract("epoch", ReviewTask.completed_at - ReviewTask.started_at) * 1000
             ).label("avg_ms")
-        ).where(ReviewTask.status == "completed", ReviewTask.completed_at.isnot(None))
+        ).where(
+            ReviewTask.status == "completed",
+            ReviewTask.started_at.isnot(None),
+            ReviewTask.completed_at.isnot(None),
+        )
         avg_row = (await session.execute(avg_stmt)).one()
 
     db_daily = {str(r.date): r for r in daily_rows}
