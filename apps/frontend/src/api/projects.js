@@ -24,3 +24,8 @@ export function updateProject(id, data) {
 export function deleteProject(id) {
   return request.delete(`/projects/${id}`)
 }
+
+/** 批量操作项目（启用/禁用/删除） */
+export function batchProjectAction(projectIds, action) {
+  return request.post('/projects/batch', { project_ids: projectIds, action })
+}

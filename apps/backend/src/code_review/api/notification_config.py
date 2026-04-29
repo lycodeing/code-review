@@ -25,6 +25,7 @@ class NotificationCreate(BaseModel):
     secret: str = ""
     at_mobiles: str = ""
     description: str = ""
+    extra_config: dict | None = None
 
 
 class NotificationUpdate(BaseModel):
@@ -33,6 +34,7 @@ class NotificationUpdate(BaseModel):
     secret: str | None = None
     at_mobiles: str | None = None
     description: str | None = None
+    extra_config: dict | None = None
 
 
 class NotificationResponse(BaseModel):
@@ -43,6 +45,7 @@ class NotificationResponse(BaseModel):
     secret: str
     at_mobiles: str
     description: str
+    extra_config: dict | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -76,6 +79,13 @@ class ImportResponse(BaseModel):
 
 def _mask_config(nc: NotificationConfig) -> NotificationResponse:
     """敏感字段脱敏。"""
+    # 对 extra_config 中的敏感字段脱敏
+    masked_extra = None
+    if nc.extra_config:
+        import copy
+        masked_extra = copy.deepcopy(nc.extra_config)
+        if "smtp_password" in masked_extra:
+            masked_extra["smtp_password"] = "********"
     return NotificationResponse(
         id=nc.id,
         channel=nc.channel,
@@ -84,6 +94,7 @@ def _mask_config(nc: NotificationConfig) -> NotificationResponse:
         secret=mask_value(nc.secret),
         at_mobiles=nc.at_mobiles,
         description=nc.description,
+        extra_config=masked_extra,
         created_at=nc.created_at,
         updated_at=nc.updated_at,
     )
@@ -155,6 +166,7 @@ async def create_notification_config(body: NotificationCreate, request: Request)
             secret=body.secret,
             at_mobiles=body.at_mobiles,
             description=body.description,
+            extra_config=body.extra_config,
         )
         return _mask_config(nc)
 

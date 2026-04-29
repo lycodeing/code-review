@@ -34,12 +34,36 @@
     <div class="table-container">
       <div class="table-toolbar">
         <span class="table-title">项目列表</span>
-        <el-button type="primary" @click="openForm()">
-          <el-icon><Plus /></el-icon> 新增项目
-        </el-button>
+        <div style="display: flex; gap: 8px; margin-left: auto;">
+          <el-button
+            type="success"
+            :disabled="selectedIds.length === 0"
+            @click="handleBatchAction('enable')"
+          >
+            批量启用 ({{ selectedIds.length }})
+          </el-button>
+          <el-button
+            type="warning"
+            :disabled="selectedIds.length === 0"
+            @click="handleBatchAction('disable')"
+          >
+            批量禁用 ({{ selectedIds.length }})
+          </el-button>
+          <el-button
+            type="danger"
+            :disabled="selectedIds.length === 0"
+            @click="handleBatchAction('delete')"
+          >
+            批量删除 ({{ selectedIds.length }})
+          </el-button>
+          <el-button type="primary" @click="openForm()">
+            <el-icon><Plus /></el-icon> 新增项目
+          </el-button>
+        </div>
       </div>
 
-      <el-table :data="filteredData" v-loading="loading" stripe>
+      <el-table :data="filteredData" v-loading="loading" stripe @selection-change="handleSelectionChange">
+        <el-table-column type="selection" width="55" align="center" />
         <el-table-column prop="name" label="项目名称" min-width="250">
           <template #default="{ row }">
             <span class="link-text" @click="viewProject(row)">{{ row.name }}</span>
@@ -145,7 +169,7 @@ import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Refresh, Edit, Delete, Cpu, Tickets, Bell, Setting } from '@element-plus/icons-vue'
-import { getProjects, deleteProject, updateProject } from '@/api/projects'
+import { getProjects, deleteProject, updateProject, batchProjectAction } from '@/api/projects'
 import { useTable } from '@/composables/useTable'
 import { formatDateTime, platformColors, platformNames } from '@/utils/format'
 import ProjectForm from './ProjectForm.vue'
@@ -243,6 +267,33 @@ async function handleDelete(row) {
 function onSaved() {
   formVisible.value = false
   loadData()
+}
+
+// 批量选择
+const selectedIds = ref([])
+
+function handleSelectionChange(selection) {
+  selectedIds.value = selection.map(row => row.id)
+}
+
+async function handleBatchAction(action) {
+  if (selectedIds.value.length === 0) return
+  const actionLabel = { enable: '启用', disable: '禁用', delete: '删除' }[action]
+  try {
+    await ElMessageBox.confirm(
+      `确定要批量${actionLabel}选中的 ${selectedIds.value.length} 个项目吗？`,
+      '批量操作确认',
+      { confirmButtonText: '确定', cancelButtonText: '取消', type: 'warning' }
+    )
+    await batchProjectAction(selectedIds.value, action)
+    ElMessage.success(`已批量${actionLabel} ${selectedIds.value.length} 个项目`)
+    selectedIds.value = []
+    loadData()
+  } catch (error) {
+    if (error !== 'cancel') {
+      ElMessage.error(error.message || '操作失败')
+    }
+  }
 }
 
 // 初始化加载

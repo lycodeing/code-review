@@ -7,7 +7,8 @@ from uuid import UUID
 from code_review.core.notification import NotificationChannel, NotificationPayload
 from code_review.infrastructure.notification_feishu import FeishuChannel
 from code_review.infrastructure.notification_dingtalk import DingTalkChannel
-from code_review.models.config import AppConfig
+from code_review.infrastructure.notification_email import EmailChannel
+from code_review.models.config import AppConfig, EmailConfig
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +16,7 @@ logger = logging.getLogger(__name__)
 CHANNEL_REGISTRY: dict[str, type[NotificationChannel]] = {
     "feishu": FeishuChannel,
     "dingtalk": DingTalkChannel,
+    "email": EmailChannel,
 }
 
 
@@ -66,8 +68,12 @@ class NotificationManager:
         for cfg in configs:
             channel_cls = CHANNEL_REGISTRY.get(cfg.channel)
             if channel_cls:
-                channel = channel_cls(cfg)
-                if channel.enabled:
+                # Email 渠道从 extra_config 构造配置
+                if cfg.channel == "email" and cfg.extra_config:
+                    channel = self._create_email_channel(cfg)
+                else:
+                    channel = channel_cls(cfg)
+                if channel and channel.enabled:
                     self._channels.append((channel, cfg.id))
                     logger.info("Notification channel enabled from DB: %s", channel.name)
 
@@ -94,12 +100,32 @@ class NotificationManager:
         self._channels.clear()
         self._init_channels_from_env()
 
+    @staticmethod
+    def _create_email_channel(cfg) -> EmailChannel | None:
+        """从数据库 NotificationConfig 的 extra_config 构造 EmailChannel。"""
+        try:
+            extra = cfg.extra_config or {}
+            email_cfg = EmailConfig(
+                enabled=cfg.enabled,
+                smtp_host=extra.get("smtp_host", ""),
+                smtp_port=extra.get("smtp_port", 587),
+                smtp_user=extra.get("smtp_user", ""),
+                smtp_password=cfg.secret or extra.get("smtp_password", ""),
+                from_addr=extra.get("from_addr", ""),
+                to_addrs=extra.get("to_addrs", []),
+            )
+            return EmailChannel(email_cfg)
+        except Exception as e:
+            logger.warning("构造 Email 渠道失败: %s", e)
+            return None
+
     async def notify_all(
         self,
         payload: NotificationPayload,
         project_id: UUID | None = None,
         task_id: UUID | None = None,
         session_factory=None,
+        project_config: dict | None = None,
     ) -> dict[str, bool]:
         """向所有已启用渠道发送通知，并将结果写入 api_call_logs。
 
@@ -108,10 +134,15 @@ class NotificationManager:
             project_id: 项目 UUID，有值时尝试解析项目级模板绑定。
             task_id: 评审任务 UUID，有值时将发送记录写入 api_call_logs。
             session_factory: 数据库 session 工厂。
+            project_config: 项目配置 JSON，含 notification_min_severity 等过滤规则。
 
         Returns:
             各渠道发送结果 {channel_name: success}。
         """
+        # 严重程度过滤
+        if not self._should_notify(payload, project_config):
+            logger.info("通知被过滤：未达到最小严重程度阈值")
+            return {}
         results = {}
         for channel, notification_id in self._channels:
             rendered_payload = await self._render_payload(
@@ -177,3 +208,30 @@ class NotificationManager:
             channel.name: await channel.health_check()
             for channel, _ in self._channels
         }
+
+    @staticmethod
+    def _should_notify(payload: NotificationPayload, project_config: dict | None) -> bool:
+        """检查评审结果的严重程度是否达到通知阈值。
+
+        配置格式（在 Project.config JSON 中）：
+        {
+            "notification_min_severity": "warning"  // info / suggestion / warning / critical
+        }
+        默认值为 "info"（所有评审都发送通知）。
+        """
+        severity_order = {"critical": 4, "warning": 3, "suggestion": 2, "info": 1}
+        min_severity = (project_config or {}).get("notification_min_severity", "info")
+        min_level = severity_order.get(min_severity, 1)
+
+        # 计算本次评审中的最高严重程度
+        severity_counts = {
+            "critical": payload.critical_count,
+            "warning": payload.warning_count,
+            "suggestion": payload.suggestion_count,
+            "info": payload.info_count,
+        }
+        max_level = max(
+            (severity_order.get(s, 0) for s, c in severity_counts.items() if c > 0),
+            default=0,
+        )
+        return max_level >= min_level

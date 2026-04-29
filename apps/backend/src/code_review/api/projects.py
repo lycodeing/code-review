@@ -125,3 +125,34 @@ async def delete_project(project_id: UUID, request: Request):
             raise HTTPException(status_code=404, detail="Project not found")
         await session.delete(project)
         await session.commit()
+
+
+class BatchProjectAction(BaseModel):
+    project_ids: list[UUID] = Field(..., min_length=1, max_length=100)
+    action: str = Field(..., pattern=r"^(enable|disable|delete)$")
+
+
+@router.post("/projects/batch")
+async def batch_project_action(body: BatchProjectAction, request: Request):
+    """批量启用/禁用/删除项目。"""
+    session_factory = request.app.state.session_factory
+    affected = 0
+
+    async with session_factory() as session:
+        stmt = select(Project).where(Project.id.in_(body.project_ids))
+        result = await session.execute(stmt)
+        projects = result.scalars().all()
+
+        for project in projects:
+            match body.action:
+                case "enable":
+                    project.enabled = 1
+                case "disable":
+                    project.enabled = 0
+                case "delete":
+                    await session.delete(project)
+            affected += 1
+
+        await session.commit()
+
+    return {"action": body.action, "affected": affected}

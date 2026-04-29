@@ -215,6 +215,8 @@ class GitLabAdapter(BasePlatformAdapter):
             mr_title=attrs.get("title"),
             mr_author=mr_author,
             mr_url=mr_url,
+            source_branch=attrs.get("source_branch"),
+            target_branch=attrs.get("target_branch"),
             raw_payload=payload,
         )
 

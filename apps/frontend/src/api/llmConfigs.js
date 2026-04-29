@@ -36,7 +36,7 @@ export function testLLMConnection(data) {
 }
 
 /** 测试已有 LLM 配置连接（按 ID，后端解密真实 Key） */
-export function testLLMConfigById(configId) {
+export function testLLMConnectionById(configId) {
   return request.post(`/llm-configs/${configId}/test`)
 }
 

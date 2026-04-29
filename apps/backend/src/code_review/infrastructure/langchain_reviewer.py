@@ -10,6 +10,7 @@ from langchain_openai import ChatOpenAI
 
 from code_review.core.llm import LLMReviewer, ReviewComment, ReviewResult
 from code_review.core.platform import FileChange
+from code_review.core.errors import RetryableError
 from code_review.infrastructure.log_helper import save_llm_log
 from code_review.infrastructure.response_parser import (
     MultiFormatResponseParser,
@@ -211,6 +212,10 @@ class LangChainReviewer(LLMReviewer):
                     response_status=0, response_body={},
                     status="failed", error_message=str(e), duration_ms=duration_ms,
                 )
+            # 将可重试的临时错误包装为 RetryableError
+            error_msg = str(e).lower()
+            if any(kw in error_msg for kw in ("timeout", "timed out", "rate limit", "429", "503", "connectionerror", "connect error")):
+                raise RetryableError(f"LLM 临时错误（可重试）: {e}") from e
             raise
 
         elapsed = time.time() - start_time

@@ -205,12 +205,13 @@ class NotificationConfig(Base):
     __tablename__ = "notification_configs"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    channel = Column(String(32), nullable=False, unique=True, comment="渠道标识: dingtalk/feishu")
+    channel = Column(String(32), nullable=False, unique=True, comment="渠道标识: dingtalk/feishu/email")
     enabled = Column(Boolean, nullable=False, default=False, comment="是否启用")
     webhook_url = Column(String(1024), nullable=False, default="", comment="Webhook 地址")
     secret = Column(Text, nullable=False, default="", comment="签名密钥（加密）")
     at_mobiles = Column(String(1024), nullable=False, default="", comment="@人手机号（逗号分隔）")
     description = Column(String(512), nullable=False, default="", comment="说明文字")
+    extra_config = Column(JSON, nullable=True, comment="渠道特有配置（如 email 的 SMTP 设置）")
     # 渠道默认模板（NULL 时使用内置 is_default 模板）
     template_id = Column(
         UUID(as_uuid=True),
@@ -468,3 +469,98 @@ class ApiCallLog(Base):
 
     def __repr__(self) -> str:
         return f"<ApiCallLog {self.call_type}/{self.provider} [{self.status}]>"
+
+
+class ReviewRule(Base):
+    """评审规则定义表。"""
+    __tablename__ = "review_rules"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name = Column(String(255), nullable=False, unique=True, comment="规则名称（唯一标识）")
+    description = Column(Text, nullable=False, default="", comment="规则描述")
+    rule_type = Column(String(32), nullable=False, default="regex", comment="规则类型: regex")
+    pattern = Column(Text, nullable=False, comment="匹配模式（正则表达式）")
+    severity = Column(String(32), nullable=False, default="warning", comment="命中时的严重程度")
+    message = Column(Text, nullable=False, comment="命中时的提示信息")
+    file_pattern = Column(String(512), nullable=False, default="**", comment="适用的文件 glob 模式")
+    enabled = Column(Boolean, nullable=False, default=True, comment="是否启用")
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(tz=timezone.utc))
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(tz=timezone.utc), onupdate=lambda: datetime.now(tz=timezone.utc))
+
+    project_bindings = relationship(
+        "ProjectRuleBinding",
+        back_populates="rule",
+        cascade="all, delete-orphan",
+    )
+
+    __table_args__ = (
+        Index("idx_review_rules_enabled", "enabled"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<ReviewRule {self.name} [{self.rule_type}]>"
+
+
+class ProjectRuleBinding(Base):
+    """项目-评审规则绑定表（多对多）。"""
+    __tablename__ = "project_rule_bindings"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    rule_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("review_rules.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    enabled = Column(Boolean, nullable=False, default=True, comment="绑定是否启用")
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(tz=timezone.utc))
+
+    project = relationship("Project")
+    rule = relationship("ReviewRule", back_populates="project_bindings")
+
+    __table_args__ = (
+        UniqueConstraint("project_id", "rule_id", name="uq_project_rule"),
+        Index("idx_project_rule_project", "project_id"),
+        Index("idx_project_rule_rule", "rule_id"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<ProjectRuleBinding {self.project_id}->{self.rule_id}>"
+
+
+class CommentReply(Base):
+    """评论回复表 — 支持多轮评审对话。"""
+    __tablename__ = "comment_replies"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    comment_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("review_comments.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    parent_reply_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("comment_replies.id", ondelete="CASCADE"),
+        nullable=True,
+        comment="父回复 ID（支持嵌套回复）",
+    )
+    author = Column(String(255), nullable=False, default="user", comment="回复作者")
+    content = Column(Text, nullable=False, comment="回复内容")
+    source = Column(String(32), nullable=False, default="user", comment="来源: user / llm / system")
+    llm_context = Column(JSON, nullable=True, comment="LLM 对话上下文")
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(tz=timezone.utc))
+
+    comment = relationship("ReviewComment", backref="replies")
+    parent = relationship("CommentReply", remote_side="CommentReply.id", backref="children")
+
+    __table_args__ = (
+        Index("idx_comment_replies_comment", "comment_id"),
+        Index("idx_comment_replies_parent", "parent_reply_id"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<CommentReply {self.id} [{self.source}]>"

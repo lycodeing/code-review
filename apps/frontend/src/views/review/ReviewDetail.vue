@@ -76,8 +76,24 @@
         <!-- 评审评论 Tab -->
         <el-tab-pane :label="`评审评论 (${comments.length})`" name="comments">
           <el-card shadow="never" class="detail-card">
-            <div v-if="comments.length">
-              <div v-for="comment in comments" :key="comment.id" class="comment-item">
+            <!-- 评论筛选栏 -->
+            <div v-if="comments.length" class="comment-filter-bar">
+              <el-select v-model="commentSeverityFilter" placeholder="严重程度" clearable size="small" style="width: 140px">
+                <el-option label="严重" value="critical" />
+                <el-option label="警告" value="warning" />
+                <el-option label="建议" value="suggestion" />
+                <el-option label="信息" value="info" />
+              </el-select>
+              <el-input v-model="commentFileSearch" placeholder="搜索文件路径" clearable size="small" style="width: 240px; margin-left: 8px" />
+              <el-radio-group v-model="commentViewMode" size="small" style="margin-left: auto">
+                <el-radio-button value="flat">列表</el-radio-button>
+                <el-radio-button value="grouped">按文件</el-radio-button>
+              </el-radio-group>
+            </div>
+
+            <!-- 列表模式 -->
+            <div v-if="comments.length && commentViewMode === 'flat'">
+              <div v-for="comment in filteredComments" :key="comment.id" class="comment-item">
                 <div class="comment-header">
                   <div class="comment-file">
                     <el-icon><Document /></el-icon>
@@ -96,8 +112,47 @@
                   <div class="md-content" v-html="renderMarkdown(comment.suggestion)" />
                 </div>
               </div>
+              <el-empty v-if="!filteredComments.length" description="没有匹配的评论" :image-size="60" />
             </div>
-            <el-empty v-else description="暂无评论" />
+
+            <!-- 按文件分组模式 -->
+            <div v-if="comments.length && commentViewMode === 'grouped'">
+              <el-collapse v-model="expandedFiles">
+                <el-collapse-item
+                  v-for="group in groupedComments"
+                  :key="group.file"
+                  :name="group.file"
+                >
+                  <template #title>
+                    <div class="file-group-title">
+                      <el-icon><Document /></el-icon>
+                      <span class="file-group-name">{{ group.file }}</span>
+                      <el-tag size="small" type="info" style="margin-left: 8px">{{ group.comments.length }}</el-tag>
+                      <span v-if="group.maxSeverity === 'critical'" class="severity-badge critical">严重</span>
+                      <span v-else-if="group.maxSeverity === 'warning'" class="severity-badge warning">警告</span>
+                    </div>
+                  </template>
+                  <div v-for="comment in group.comments" :key="comment.id" class="comment-item">
+                    <div class="comment-header">
+                      <div class="comment-meta">
+                        <StatusTag :status="comment.severity" type="severity" />
+                        <span v-if="comment.line_start" class="line-range">
+                          L{{ comment.line_start }}{{ comment.line_end !== comment.line_start ? ` - L${comment.line_end}` : '' }}
+                        </span>
+                      </div>
+                    </div>
+                    <div class="comment-body md-content" v-html="renderMarkdown(comment.message)" />
+                    <div v-if="comment.suggestion" class="comment-suggestion">
+                      <strong>建议修复：</strong>
+                      <div class="md-content" v-html="renderMarkdown(comment.suggestion)" />
+                    </div>
+                  </div>
+                </el-collapse-item>
+              </el-collapse>
+              <el-empty v-if="!groupedComments.length" description="没有匹配的评论" :image-size="60" />
+            </div>
+
+            <el-empty v-if="!comments.length" description="暂无评论" />
           </el-card>
         </el-tab-pane>
 
@@ -183,7 +238,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { RefreshRight, Bell, Document } from '@element-plus/icons-vue'
@@ -208,6 +263,47 @@ const notifying = ref(false)
 const logDrawerVisible = ref(false)
 const selectedLog = ref(null)
 const activeCollapseItems = ref(['req_headers', 'req_body', 'resp_body'])
+
+// 评论筛选
+const commentSeverityFilter = ref('')
+const commentFileSearch = ref('')
+const commentViewMode = ref('flat')
+const expandedFiles = ref([])
+
+const severityOrder = { critical: 4, warning: 3, suggestion: 2, info: 1 }
+
+const filteredComments = computed(() => {
+  let data = comments.value
+  if (commentSeverityFilter.value) {
+    data = data.filter(c => c.severity === commentSeverityFilter.value)
+  }
+  if (commentFileSearch.value) {
+    const keyword = commentFileSearch.value.toLowerCase()
+    data = data.filter(c => c.file_path.toLowerCase().includes(keyword))
+  }
+  return data
+})
+
+const groupedComments = computed(() => {
+  const filtered = filteredComments.value
+  const groupMap = new Map()
+  for (const c of filtered) {
+    if (!groupMap.has(c.file_path)) {
+      groupMap.set(c.file_path, [])
+    }
+    groupMap.get(c.file_path).push(c)
+  }
+  const groups = []
+  for (const [file, fileComments] of groupMap) {
+    const maxSeverity = fileComments.reduce(
+      (max, c) => (severityOrder[c.severity] || 0) > (severityOrder[max] || 0) ? c.severity : max,
+      'info'
+    )
+    groups.push({ file, comments: fileComments, maxSeverity })
+  }
+  groups.sort((a, b) => (severityOrder[b.maxSeverity] || 0) - (severityOrder[a.maxSeverity] || 0))
+  return groups
+})
 
 function openLogDetail(row) {
   selectedLog.value = row
@@ -428,5 +524,34 @@ onMounted(loadDetail)
   word-break: break-all;
   max-height: 400px;
   overflow-y: auto;
+}
+
+.comment-filter-bar {
+  display: flex;
+  align-items: center;
+  margin-bottom: 16px;
+  gap: 8px;
+}
+
+.file-group-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.file-group-name {
+  font-family: monospace;
+  color: #303133;
+}
+
+.severity-badge {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  margin-left: 4px;
+  font-weight: 600;
+  &.critical { background: #fef0f0; color: #f56c6c; }
+  &.warning { background: #fdf6ec; color: #e6a23c; }
 }
 </style>

@@ -60,6 +60,10 @@ class DeleteReviewsRequest(BaseModel):
     task_ids: list[UUID] = Field(..., min_length=1, max_length=100)
 
 
+class BatchRetryRequest(BaseModel):
+    task_ids: list[UUID] = Field(..., min_length=1, max_length=100)
+
+
 class DeleteReviewsByDateRequest(BaseModel):
     start_date: datetime = Field(..., description="开始日期")
     end_date: datetime = Field(..., description="结束日期")
@@ -166,6 +170,43 @@ async def batch_delete_reviews(body: DeleteReviewsRequest, request: Request):
             await session.delete(task)
         await session.commit()
         logger.info(f"批量删除评审记录: {len(tasks)} 条")
+
+
+@router.post("/reviews/batch-retry")
+async def batch_retry_reviews(body: BatchRetryRequest, background_tasks: BackgroundTasks, request: Request):
+    """批量重试失败的评审任务。"""
+    session_factory = request.app.state.session_factory
+    orchestrator = request.app.state.orchestrator
+
+    async with session_factory() as session:
+        stmt = select(ReviewTask).where(
+            ReviewTask.id.in_(body.task_ids),
+            ReviewTask.status.in_(["failed", "completed"]),
+        )
+        result = await session.execute(stmt)
+        tasks = result.scalars().all()
+
+    retried = 0
+    for task in tasks:
+        async with session_factory() as session:
+            db_task = await session.get(ReviewTask, task.id)
+            if db_task:
+                db_task.status = ReviewTask.Status.PENDING
+                db_task.error_message = None
+                db_task.started_at = None
+                db_task.completed_at = None
+                await session.commit()
+
+        try:
+            from code_review.infrastructure.celery_app import get_celery
+            celery = get_celery()
+            celery.send_task("code_review.execute_review", args=[str(task.id)], queue="review")
+        except Exception:
+            background_tasks.add_task(orchestrator.execute_review, str(task.id))
+        retried += 1
+
+    logger.info(f"批量重试评审记录: {retried} 条")
+    return {"retried": retried, "total": len(body.task_ids)}
 
 
 @router.post("/reviews/delete-by-date", status_code=204)

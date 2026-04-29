@@ -105,6 +105,7 @@ class NotificationConfigService:
         secret: str = "",
         at_mobiles: str = "",
         description: str = "",
+        extra_config: dict | None = None,
     ) -> NotificationConfig:
         """创建通知渠道配置。"""
         nc = NotificationConfig(
@@ -114,6 +115,7 @@ class NotificationConfigService:
             secret=encrypt(secret, self._secret_key) if secret else "",
             at_mobiles=at_mobiles,
             description=description,
+            extra_config=extra_config,
         )
         self._session.add(nc)
         await self._session.commit()

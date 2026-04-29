@@ -101,7 +101,7 @@ import {
   getLLMConfigs,
   deleteLLMConfig,
   toggleLLMConfig,
-  testLLMConfigById
+  testLLMConnectionById
 } from '@/api/llmConfigs'
 import LLMConfigForm from './LLMConfigForm.vue'
 
@@ -187,7 +187,7 @@ async function toggleEnabled(item, val) {
 async function handleQuickTest(item) {
   testingConfigId.value = item.id
   try {
-    const result = await testLLMConfigById(item.id)
+    const result = await testLLMConnectionById(item.id)
     if (result.success) {
       ElMessage.success(`连接成功 (${result.response_time_ms}ms)`)
     } else {

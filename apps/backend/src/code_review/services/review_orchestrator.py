@@ -32,6 +32,7 @@ from code_review.services.comment_aggregator import CommentAggregator
 from code_review.services.llm_config_service import LLMConfigService
 from code_review.services.platform_config_service import PlatformConfigService
 from code_review.services.prompt_template_service import PromptTemplateService, seed_default_templates
+from code_review.services.rule_engine import check_changes_against_rules, get_rules_for_project
 
 logger = logging.getLogger(__name__)
 
@@ -141,6 +142,15 @@ class ReviewOrchestrator:
                 logger.info("Action '%s' does not trigger review", event.action)
                 return None
 
+            # 分支过滤（基于 Project.config JSON 配置）
+            project_config = project.config or {}
+            if not self._should_review_branch(event, project_config):
+                logger.info(
+                    "分支 %s 被过滤，跳过评审（project=%s）",
+                    event.source_branch, project.name,
+                )
+                return None
+
             # 创建评审任务记录
             task = ReviewTask(
                 project_id=project.id,
@@ -239,6 +249,10 @@ class ReviewOrchestrator:
                 # 合并 diff
                 combined_diff = self._combine_diffs(filtered_changes)
 
+                # 执行规则引擎（确定性检查，在 LLM 评审前执行）
+                rules = await get_rules_for_project(session, task.project_id)
+                rule_comments = check_changes_against_rules(filtered_changes, rules)
+
                 # 选择 prompt 模板（从数据库动态加载，支持热更新）
                 languages = {
                     self._prompt_manager.detect_language(c.path)
@@ -270,23 +284,18 @@ class ReviewOrchestrator:
                         template_name=project_template_name,
                     )
 
-                # 获取项目的 LLM 配置
+                # 获取项目的 LLM 配置链（按优先级排序，用于故障转移）
                 llm_config_service = LLMConfigService(session, self._secret_key)
-                llm_config = await llm_config_service.get_llm_config_for_project(task.project_id)
+                llm_config_chain = await llm_config_service.get_llm_configs_chain(task.project_id)
 
-                logger.debug("项目 %s 的 LLM 配置: %s", task.project_id, llm_config)
+                logger.debug("项目 %s 的 LLM 配置链: %s", task.project_id, [c.name for c in llm_config_chain])
 
-                # 构造 LLM 配置
-                if llm_config:
-                    # 使用数据库配置
+                # 构造 LLM 配置候选列表
+                llm_candidates: list[tuple[str, LLMConfig]] = []
+                for llm_config in llm_config_chain:
                     api_key = await llm_config_service.decrypt_api_key(llm_config.api_key)
-                    logger.debug("数据库配置: provider=%r, model_name=%r", llm_config.provider, llm_config.model_name)
-
-                    model = llm_config.model_name
-                    logger.debug("最终模型: %r", model)
-                    # 创建 LLMConfig 对象（包含 response_format）
                     llm_settings = LLMConfig(
-                        model=model,
+                        model=llm_config.model_name,
                         api_key=api_key,
                         api_base=llm_config.api_base or "",
                         temperature=llm_config.extra_params.get("temperature", 0.3) if llm_config.extra_params else 0.3,
@@ -295,25 +304,52 @@ class ReviewOrchestrator:
                         response_format=llm_config.response_format or "auto",
                         extra_params=llm_config.extra_params,
                     )
-                    logger.debug("LLMConfig.model=%r, response_format=%r", llm_settings.model, llm_settings.response_format)
-                    task.model_name = model
-                    logger.info("使用数据库 LLM 配置: %s", task.model_name)
-                else:
-                    # 降级到环境变量配置
-                    llm_settings = self._config.llm
-                    logger.info("使用环境变量 LLM 配置, model=%r", llm_settings.model)
+                    llm_candidates.append((llm_config.name, llm_settings))
 
-                # 调用 LLM 评审
-                reviewer = LangChainReviewer(llm_settings)
-                result: ReviewResult = await reviewer.review(
-                    diff=combined_diff,
-                    files=filtered_changes,
-                    prompt_template=prompt,
-                    task_id=task.id,
-                    session_factory=self._session_factory,
-                )
+                # 无数据库配置时，降级到环境变量
+                if not llm_candidates:
+                    llm_candidates.append(("env_default", self._config.llm))
+                    logger.info("无数据库 LLM 配置，降级到环境变量, model=%r", self._config.llm.model)
 
-                task.model_name = result.model
+                # 按优先级尝试 LLM 调用，失败则自动降级到下一个
+                result: ReviewResult | None = None
+                last_error: Exception | None = None
+                tried_configs: list[str] = []
+
+                for config_name, llm_settings in llm_candidates:
+                    try:
+                        logger.info("尝试 LLM 配置: %s, model=%s", config_name, llm_settings.model)
+                        reviewer = LangChainReviewer(llm_settings)
+                        result = await reviewer.review(
+                            diff=combined_diff,
+                            files=filtered_changes,
+                            prompt_template=prompt,
+                            task_id=task.id,
+                            session_factory=self._session_factory,
+                        )
+                        task.model_name = result.model
+                        logger.info("LLM 配置 %s 评审成功, model=%s", config_name, result.model)
+                        break
+                    except Exception as e:
+                        tried_configs.append(config_name)
+                        last_error = e
+                        logger.warning(
+                            "LLM 配置 %s (model=%s) 调用失败: %s",
+                            config_name, llm_settings.model, e,
+                        )
+                        if len(llm_candidates) > 1:
+                            logger.info("尝试故障转移到下一个 LLM 配置...")
+                        continue
+
+                if result is None:
+                    raise RuntimeError(
+                        f"所有 LLM 配置均失败（已尝试: {', '.join(tried_configs)}）: {last_error}"
+                    )
+
+                # 合并规则引擎评论和 LLM 评论
+                if rule_comments:
+                    logger.info("规则引擎命中 %d 条，LLM 评论 %d 条", len(rule_comments), len(result.comments))
+                    result.comments.extend(rule_comments)
 
                 # 聚合评论
                 aggregated, summary = self._aggregator.aggregate(result.comments)
@@ -373,6 +409,7 @@ class ReviewOrchestrator:
                     project_id=task.project_id,
                     task_id=task.id,
                     session_factory=self._session_factory,
+                    project_config=project.config,
                 )
 
                 task.status = ReviewTask.Status.COMPLETED
@@ -411,11 +448,13 @@ class ReviewOrchestrator:
     def _filter_files(
         self, changes: list[FileChange], project_config: dict
     ) -> list[FileChange]:
-        """根据排除规则过滤文件。"""
+        """根据排除规则和 diff 大小限制过滤文件。"""
         # 项目级配置覆盖全局配置
         exclude_patterns = project_config.get(
             "exclude_patterns", self._config.review.exclude_patterns
         )
+        # diff 大小限制（字符数，超过则截断部分文件）
+        max_diff_size = project_config.get("max_diff_size", 0)
 
         filtered = []
         for change in changes:
@@ -424,7 +463,55 @@ class ReviewOrchestrator:
             )
             if not excluded:
                 filtered.append(change)
+
+        # 按 max_diff_size 裁剪（保留前面的文件，通常是按重要性排序）
+        if max_diff_size > 0:
+            total = 0
+            trimmed = []
+            for change in filtered:
+                diff_len = len(change.diff) if change.diff else 0
+                if total + diff_len > max_diff_size:
+                    logger.info(
+                        "diff 超过 max_diff_size=%d，截断剩余文件（已包含 %d 个文件）",
+                        max_diff_size, len(trimmed),
+                    )
+                    break
+                total += diff_len
+                trimmed.append(change)
+            filtered = trimmed
+
         return filtered
+
+    @staticmethod
+    def _should_review_branch(event: WebhookEvent, project_config: dict) -> bool:
+        """检查分支是否应该触发评审。
+
+        配置格式（在 Project.config JSON 中）：
+        {
+            "include_branches": ["main", "develop", "release/*"],  // 白名单，空则全部允许
+            "exclude_branches": ["experimental/*", "test/*"]       // 黑名单
+        }
+        """
+        source_branch = event.source_branch
+        if not source_branch:
+            return True
+
+        include_branches = project_config.get("include_branches", [])
+        exclude_branches = project_config.get("exclude_branches", [])
+
+        # 白名单检查：配置了白名单时，必须匹配至少一条规则
+        if include_branches:
+            included = any(fnmatch(source_branch, p) for p in include_branches)
+            if not included:
+                return False
+
+        # 黑名单检查：匹配任何一条规则则排除
+        if exclude_branches:
+            excluded = any(fnmatch(source_branch, p) for p in exclude_branches)
+            if excluded:
+                return False
+
+        return True
 
     @staticmethod
     def _combine_diffs(changes: list[FileChange]) -> str:

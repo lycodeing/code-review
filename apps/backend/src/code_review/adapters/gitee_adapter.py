@@ -280,6 +280,8 @@ class GiteeAdapter(BasePlatformAdapter):
             mr_title=pr.get("title"),
             mr_author=mr_author,
             mr_url=mr_url,
+            source_branch=pr.get("head", {}).get("ref") or pr.get("head", {}).get("label"),
+            target_branch=pr.get("base", {}).get("ref") or pr.get("base", {}).get("label"),
             raw_payload=payload,
         )
 

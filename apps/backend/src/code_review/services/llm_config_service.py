@@ -190,7 +190,7 @@ class LLMConfigService:
     async def get_llm_config_for_project(
         self, project_id: UUID
     ) -> Optional[LLMConfig]:
-        """获取项目的 LLM 配置。
+        """获取项目的 LLM 配置（向后兼容，返回链中的第一个）。
 
         选择优先级：
         1. 项目的默认绑定（is_default=True）
@@ -203,41 +203,46 @@ class LLMConfigService:
         Returns:
             LLM 配置或 None
         """
-        # 1. 查找项目默认绑定
+        chain = await self.get_llm_configs_chain(project_id)
+        return chain[0] if chain else None
+
+    async def get_llm_configs_chain(
+        self, project_id: UUID
+    ) -> list[LLMConfig]:
+        """按优先级返回项目的 LLM 配置链（用于故障转移）。
+
+        排序规则：
+        1. is_default=True 的排在最前
+        2. 其余按 priority DESC
+        3. 仅返回 enabled 的配置
+
+        Args:
+            project_id: 项目 ID
+
+        Returns:
+            按优先级排序的 LLM 配置列表（可能为空）
+        """
         stmt = (
-            select(LLMConfig)
+            select(LLMConfig, ProjectLLMBinding.is_default, ProjectLLMBinding.priority)
             .join(ProjectLLMBinding)
             .where(
                 ProjectLLMBinding.project_id == project_id,
-                ProjectLLMBinding.is_default.is_(True),
                 ProjectLLMBinding.enabled.is_(True),
                 LLMConfig.enabled.is_(True),
             )
-        )
-        result = await self._session.execute(stmt)
-        config = result.scalar_one_or_none()
-        if config:
-            return config
-
-        # 2. 查找项目最高优先级绑定
-        stmt = (
-            select(LLMConfig)
-            .join(ProjectLLMBinding)
-            .where(
-                ProjectLLMBinding.project_id == project_id,
-                ProjectLLMBinding.enabled.is_(True),
-                LLMConfig.enabled.is_(True),
+            .order_by(
+                ProjectLLMBinding.is_default.desc(),
+                ProjectLLMBinding.priority.desc(),
             )
-            .order_by(ProjectLLMBinding.priority.desc())
-            .limit(1)
         )
-        result = await self._session.execute(stmt)
-        config = result.scalar_one_or_none()
-        if config:
-            return config
-
-        # 3. 没有找到配置，返回 None（调用方将降级到环境变量）
-        return None
+        rows = await self._session.execute(stmt)
+        seen = set()
+        configs = []
+        for config, _, _ in rows:
+            if config.id not in seen:
+                seen.add(config.id)
+                configs.append(config)
+        return configs
 
     async def decrypt_api_key(self, encrypted_key: str) -> str:
         """解密 API Key。

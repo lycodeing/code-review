@@ -54,3 +54,8 @@ export function sendReviewNotification(id) {
   return request.post(`/reviews/${id}/notify`)
 }
 
+/** 批量重试评审任务 */
+export function batchRetryReviews(taskIds) {
+  return request.post('/reviews/batch-retry', { task_ids: taskIds })
+}
+

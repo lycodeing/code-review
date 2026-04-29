@@ -90,6 +90,8 @@ class WebhookEvent:
     mr_title: str | None = None  # MR 标题
     mr_author: str | None = None  # MR 作者
     mr_url: str | None = None  # MR URL
+    source_branch: str | None = None  # 源分支
+    target_branch: str | None = None  # 目标分支
     raw_payload: dict = field(default_factory=dict)
 
 

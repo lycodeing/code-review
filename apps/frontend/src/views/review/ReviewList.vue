@@ -53,6 +53,13 @@
           >
             <el-icon><Delete /></el-icon> 批量删除 ({{ selectedIds.length }})
           </el-button>
+          <el-button
+            type="warning"
+            :disabled="selectedIds.length === 0"
+            @click="handleBatchRetry"
+          >
+            <el-icon><RefreshRight /></el-icon> 批量重试 ({{ selectedIds.length }})
+          </el-button>
           <el-button type="danger" plain @click="handleClearAll">
             <el-icon><Delete /></el-icon> 清空所有
           </el-button>
@@ -218,8 +225,8 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Delete, Refresh, Search } from '@element-plus/icons-vue'
-import { getReviews, deleteReview, batchDeleteReviews, deleteReviewsByDate, createManualReview, clearAllReviews, retryReview } from '@/api/reviews'
+import { Plus, Delete, Refresh, Search, RefreshRight } from '@element-plus/icons-vue'
+import { getReviews, deleteReview, batchDeleteReviews, batchRetryReviews, deleteReviewsByDate, createManualReview, clearAllReviews, retryReview } from '@/api/reviews'
 import { getProjects } from '@/api/projects'
 import { useTable } from '@/composables/useTable'
 import { formatDateTime } from '@/utils/format'
@@ -348,6 +355,33 @@ async function handleBatchDelete() {
   } catch (error) {
     if (error !== 'cancel') {
       ElMessage.error(error.message || '批量删除失败')
+    }
+  }
+}
+
+// 批量重试
+async function handleBatchRetry() {
+  if (selectedIds.value.length === 0) {
+    ElMessage.warning('请先选择要重试的记录')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      `确定要重试选中的 ${selectedIds.value.length} 条评审记录吗？`,
+      '批量重试确认',
+      {
+        confirmButtonText: '确定',
+        cancelButtonText: '取消',
+        type: 'warning'
+      }
+    )
+    const result = await batchRetryReviews(selectedIds.value)
+    ElMessage.success(`已提交 ${result.retried} 条重试任务`)
+    selectedIds.value = []
+    loadData(filters.value)
+  } catch (error) {
+    if (error !== 'cancel') {
+      ElMessage.error(error.message || '批量重试失败')
     }
   }
 }

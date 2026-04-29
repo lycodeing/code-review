@@ -195,7 +195,10 @@ async def test_existing_connection(
         config = await svc.get_config(config_id)
         if not config:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="配置不存在")
-        real_key = await svc.decrypt_api_key(config.api_key)
+        try:
+            real_key = await svc.decrypt_api_key(config.api_key)
+        except Exception:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="API Key 解密失败")
         return await _do_test_connection(
             model_name=config.model_name,
             api_key=real_key,
@@ -206,7 +209,7 @@ async def test_existing_connection(
 async def _do_test_connection(
     model_name: str,
     api_key: str,
-    api_base: str,
+    api_base: str | None = None,
 ) -> TestConnectionResponse:
     """执行 LLM 连接测试的公共逻辑。"""
     start_time = time.time()

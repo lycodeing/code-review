@@ -10,7 +10,9 @@ from code_review.models.db import ReviewTask, ReviewComment, Project
 router = APIRouter(prefix="/api/v1/dashboard", tags=["dashboard"])
 
 
-def _period_start(period: str) -> datetime | None:
+def _period_start(period: str, start_date: str | None = None, end_date: str | None = None) -> datetime | None:
+    if period == "custom" and start_date:
+        return datetime.fromisoformat(start_date).replace(tzinfo=timezone.utc)
     now = datetime.now(timezone.utc)
     if period == "week":
         return (now - timedelta(days=now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
@@ -22,7 +24,9 @@ def _period_start(period: str) -> datetime | None:
 @router.get("/stats")
 async def dashboard_stats(
     request: Request,
-    period: str = Query("all", pattern="^(week|month|all)$"),
+    period: str = Query("all", pattern="^(week|month|all|custom)$"),
+    start_date: str | None = Query(None),
+    end_date: str | None = Query(None),
 ):
     session_factory = request.app.state.session_factory
     async with session_factory() as session:
@@ -38,8 +42,11 @@ async def dashboard_stats(
         )
         overview = (await session.execute(overview_stmt)).one()
 
-        start_date = _period_start(period)
-        period_filter = ReviewTask.created_at >= start_date if start_date else True
+        sd = _period_start(period, start_date, end_date)
+        period_filter = ReviewTask.created_at >= sd if sd else True
+        if period == "custom" and end_date:
+            ed = datetime.fromisoformat(end_date).replace(tzinfo=timezone.utc)
+            period_filter = period_filter & (ReviewTask.created_at <= ed)
 
         period_stmt = select(
             func.count().label("review_count"),
@@ -86,7 +93,7 @@ async def dashboard_stats(
             },
             "period_stats": {
                 "period": period,
-                "start_date": start_date.isoformat() if start_date else None,
+                "start_date": sd.isoformat() if sd else None,
                 "review_count": ps.review_count,
                 "completed": ps.completed,
                 "failed": ps.failed,

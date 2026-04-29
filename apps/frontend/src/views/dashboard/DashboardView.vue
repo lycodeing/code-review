@@ -2,11 +2,23 @@
   <div class="page-container">
     <!-- 周期切换 -->
     <div class="period-bar">
-      <el-radio-group v-model="period" size="small" @change="loadStats">
+      <el-radio-group v-model="period" size="small" @change="handlePeriodChange">
         <el-radio-button value="week">本周</el-radio-button>
         <el-radio-button value="month">本月</el-radio-button>
         <el-radio-button value="all">全部</el-radio-button>
+        <el-radio-button value="custom">自定义</el-radio-button>
       </el-radio-group>
+      <el-date-picker
+        v-if="period === 'custom'"
+        v-model="customRange"
+        type="daterange"
+        range-separator="至"
+        start-placeholder="开始日期"
+        end-placeholder="结束日期"
+        size="small"
+        style="margin-left: 12px"
+        @change="loadStats"
+      />
     </div>
 
     <!-- 统计卡片 -->
@@ -151,6 +163,7 @@ const trendDays = ref(14)
 const statsData = ref(null)
 const trendData = ref([])
 const recentReviews = ref([])
+const customRange = ref(null)
 
 const statCards = computed(() => {
   const o = statsData.value?.overview || {}
@@ -261,9 +274,20 @@ async function checkHealth() {
 
 async function loadStats() {
   try {
-    statsData.value = await getDashboardStats(period.value)
+    const params = { period: period.value }
+    if (period.value === 'custom' && customRange.value && customRange.value.length === 2) {
+      params.start_date = customRange.value[0].toISOString().slice(0, 10)
+      params.end_date = customRange.value[1].toISOString().slice(0, 10)
+    }
+    statsData.value = await getDashboardStats(params)
   } catch {
     statsData.value = null
+  }
+}
+
+function handlePeriodChange() {
+  if (period.value !== 'custom') {
+    loadStats()
   }
 }
 
