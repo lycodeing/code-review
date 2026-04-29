@@ -189,10 +189,12 @@ class ReviewOrchestrator:
                     .values(is_latest=False)
                 )
 
-                # 使用 MAX(revision) 而非 COUNT 防止并发产生相同 revision 号
+                # 取主记录和所有子版本中最大的 revision，防止 revision 号重复
                 max_rev = (await session.execute(
                     select(func.coalesce(func.max(ReviewTask.revision), 0))
-                    .where(ReviewTask.parent_id == parent_task.id)
+                    .where(
+                        (ReviewTask.id == parent_task.id) | (ReviewTask.parent_id == parent_task.id)
+                    )
                 )).scalar()
                 new_revision = max_rev + 1
 
