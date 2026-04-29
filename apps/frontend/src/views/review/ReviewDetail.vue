@@ -4,30 +4,12 @@
       <template #content>
         <span>评审详情</span>
         <StatusTag v-if="detail.status" :status="detail.status" style="margin-left: 8px" />
+        <el-tag v-if="revisions.length > 1" size="small" type="info" style="margin-left: 8px">
+          v{{ selectedRevision || detail.revision || 1 }}
+        </el-tag>
       </template>
       <template #extra>
         <div style="display: flex; gap: 8px; align-items: center">
-          <el-select
-            v-if="revisions.length > 1"
-            v-model="selectedRevision"
-            placeholder="选择版本"
-            size="small"
-            style="width: 160px"
-            @change="handleRevisionChange"
-          >
-            <el-option
-              v-for="rev in revisions"
-              :key="rev.id"
-              :label="`#${rev.revision} - ${formatDateTime(rev.created_at)}`"
-              :value="rev.revision"
-            >
-              <div style="display: flex; justify-content: space-between; align-items: center">
-                <span>#{{ rev.revision }}</span>
-                <span style="color: #909399; font-size: 12px">{{ rev.trigger_action }}</span>
-                <StatusTag :status="rev.status" type="severity" />
-              </div>
-            </el-option>
-          </el-select>
           <el-button
             v-if="detail.status === 'failed'"
             type="warning"
@@ -48,6 +30,37 @@
         </div>
       </template>
     </el-page-header>
+
+    <!-- 评审历史版本面板 -->
+    <el-card v-if="revisions.length > 1" shadow="never" class="revision-card">
+      <template #header>
+        <div class="revision-header">
+          <div class="revision-title">
+            <el-icon style="margin-right: 4px"><Clock /></el-icon>
+            <span>评审历史</span>
+            <el-tag size="small" type="info" style="margin-left: 8px">{{ revisions.length }} 个版本</el-tag>
+          </div>
+        </div>
+      </template>
+      <div class="revision-list">
+        <div
+          v-for="rev in sortedRevisions"
+          :key="rev.id"
+          :class="['revision-item', { active: selectedRevision === rev.revision }]"
+          @click="switchRevision(rev.revision)"
+        >
+          <div class="revision-left">
+            <span class="revision-number">#{{ rev.revision }}</span>
+            <StatusTag :status="rev.status" type="severity" />
+            <span class="revision-trigger">{{ rev.trigger_action }}</span>
+          </div>
+          <div class="revision-right">
+            <span class="revision-model">{{ rev.model_name || '-' }}</span>
+            <span class="revision-time">{{ formatDateTime(rev.created_at) }}</span>
+          </div>
+        </div>
+      </div>
+    </el-card>
 
     <div v-loading="loading" style="margin-top: 20px">
       <el-tabs v-model="activeTab">
@@ -270,7 +283,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { RefreshRight, Bell, Document } from '@element-plus/icons-vue'
+import { RefreshRight, Bell, Document, Clock } from '@element-plus/icons-vue'
 import { getReview, getReviewComments, retryReview, sendReviewNotification, updateCommentFeedback, getReviewRevisions } from '@/api/reviews'
 import { getReviewLogs } from '@/api/logs'
 import { formatDateTime } from '@/utils/format'
@@ -302,6 +315,11 @@ const commentViewMode = ref('flat')
 const expandedFiles = ref([])
 
 const severityOrder = { critical: 4, warning: 3, suggestion: 2, info: 1 }
+
+// 按 revision 倒序排列（最新在前）
+const sortedRevisions = computed(() => {
+  return [...revisions.value].sort((a, b) => b.revision - a.revision)
+})
 
 const filteredComments = computed(() => {
   let data = comments.value
@@ -369,13 +387,13 @@ async function loadDetail() {
     detail.value = taskData
     revisions.value = Array.isArray(revisionsData) ? revisionsData : []
 
-    // 如果有子版本，默认选中最新的
-    if (revisions.value.length > 1) {
+    // 默认选中最新版本
+    if (revisions.value.length > 0) {
       const latest = revisions.value.reduce((a, b) => (a.revision > b.revision ? a : b))
       selectedRevision.value = latest.revision
     }
 
-    // 加载最新版本的 comments 和 logs
+    // 加载当前版本的 comments 和 logs
     await loadRevisionData(selectedRevision.value)
   } catch {
     // 拦截器已处理
@@ -386,17 +404,19 @@ async function loadDetail() {
 
 async function loadRevisionData(revision) {
   const id = route.params.id
-  const params = revision && revisions.value.length > 1 ? revision : undefined
+  const params = revision ? { revision } : {}
   const [commentsData, logsData] = await Promise.all([
-    getReviewComments(id, params),
-    getReviewLogs(id, params),
+    getReviewComments(id, revision),
+    getReviewLogs(id, revision),
   ])
   comments.value = Array.isArray(commentsData) ? commentsData : []
   logs.value = Array.isArray(logsData) ? logsData : []
 }
 
-async function handleRevisionChange(revision) {
+async function switchRevision(revision) {
+  if (revision === selectedRevision.value) return
   loading.value = true
+  selectedRevision.value = revision
   try {
     await loadRevisionData(revision)
     // 更新详情中的版本相关信息
@@ -425,8 +445,7 @@ async function handleRevisionChange(revision) {
 async function loadLogs() {
   logsLoading.value = true
   try {
-    const params = selectedRevision.value && revisions.value.length > 1 ? selectedRevision.value : undefined
-    const data = await getReviewLogs(route.params.id, params)
+    const data = await getReviewLogs(route.params.id, selectedRevision.value)
     logs.value = Array.isArray(data) ? data : []
   } catch {
     // ignore
@@ -458,7 +477,6 @@ async function handleSendNotification() {
     } else {
       ElMessage.warning(`通知发送失败，请检查通知渠道配置`)
     }
-    // 刷新日志
     await loadLogs()
   } catch (error) {
     ElMessage.error(error.message || '发送通知失败')
@@ -638,5 +656,110 @@ onMounted(loadDetail)
   font-weight: 600;
   &.critical { background: #fef0f0; color: #f56c6c; }
   &.warning { background: #fdf6ec; color: #e6a23c; }
+}
+
+// 评审历史面板样式
+.revision-card {
+  margin-top: 16px;
+  border-radius: $border-radius;
+  border: 1px solid #e4e7ed;
+
+  :deep(.el-card__header) {
+    padding: 12px 20px;
+    background: #f5f7fa;
+  }
+
+  :deep(.el-card__body) {
+    padding: 8px;
+  }
+}
+
+.revision-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.revision-title {
+  display: flex;
+  align-items: center;
+  font-size: 14px;
+  font-weight: 600;
+  color: #303133;
+}
+
+.revision-list {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 4px 0;
+}
+
+.revision-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  border: 2px solid #e4e7ed;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+  min-width: 200px;
+  flex-shrink: 0;
+
+  &:hover {
+    border-color: #c0c4cc;
+    background: #fafafa;
+  }
+
+  &.active {
+    border-color: #409eff;
+    background: #ecf5ff;
+    box-shadow: 0 0 0 1px #409eff;
+  }
+}
+
+.revision-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.revision-number {
+  font-size: 16px;
+  font-weight: 700;
+  color: #303133;
+  font-family: monospace;
+  min-width: 28px;
+}
+
+.revision-trigger {
+  font-size: 12px;
+  color: #909399;
+  max-width: 60px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.revision-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+.revision-model {
+  font-size: 11px;
+  color: #909399;
+  max-width: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.revision-time {
+  font-size: 11px;
+  color: #c0c4cc;
 }
 </style>
