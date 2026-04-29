@@ -340,39 +340,51 @@ async def batch_delete_reviews(body: DeleteReviewsRequest, request: Request):
 
 @router.post("/reviews/batch-retry")
 async def batch_retry_reviews(body: BatchRetryRequest, background_tasks: BackgroundTasks, request: Request):
-    """批量重试失败的评审任务。"""
+    """批量重试失败的评审任务。
+
+    对每个选中记录，找到其最新版本（子版本或自身），
+    仅当最新版本状态为 failed 或 timeout 时才重试，跳过已完成的记录。
+    """
     session_factory = request.app.state.session_factory
     orchestrator = request.app.state.orchestrator
 
-    async with session_factory() as session:
-        stmt = select(ReviewTask).where(
-            ReviewTask.id.in_(body.task_ids),
-            ReviewTask.status.in_(["failed", "completed", "timeout"]),
-        )
-        result = await session.execute(stmt)
-        tasks = result.scalars().all()
-
     retried = 0
-    for task in tasks:
+    skipped = 0
+
+    for task_id in body.task_ids:
         async with session_factory() as session:
-            db_task = await session.get(ReviewTask, task.id)
-            if db_task:
-                db_task.status = ReviewTask.Status.PENDING
-                db_task.error_message = None
-                db_task.started_at = None
-                db_task.completed_at = None
-                await session.commit()
+            task = await session.get(ReviewTask, task_id)
+            if not task:
+                continue
+
+            # 找到实际要重试的目标：最新子版本或自身
+            retry_target = task
+            if task.parent_id is None:
+                latest = await _find_latest_child(session, task.id)
+                if latest:
+                    retry_target = latest
+
+            # 只重试最新版本为 failed 或 timeout 的记录
+            if retry_target.status not in (ReviewTask.Status.FAILED, ReviewTask.Status.TIMEOUT):
+                skipped += 1
+                continue
+
+            retry_target.status = ReviewTask.Status.PENDING
+            retry_target.error_message = None
+            retry_target.started_at = None
+            retry_target.completed_at = None
+            await session.commit()
 
         try:
             from code_review.infrastructure.celery_app import get_celery
             celery = get_celery()
-            celery.send_task("code_review.execute_review", args=[str(task.id)], queue="review")
+            celery.send_task("code_review.execute_review", args=[str(retry_target.id)], queue="review")
         except Exception:
-            background_tasks.add_task(orchestrator.execute_review, str(task.id))
+            background_tasks.add_task(orchestrator.execute_review, str(retry_target.id))
         retried += 1
 
-    logger.info(f"批量重试评审记录: {retried} 条")
-    return {"retried": retried, "total": len(body.task_ids)}
+    logger.info(f"批量重试评审记录: 重试 {retried} 条, 跳过 {skipped} 条")
+    return {"retried": retried, "skipped": skipped, "total": len(body.task_ids)}
 
 
 @router.post("/reviews/delete-by-date", status_code=204)

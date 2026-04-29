@@ -383,11 +383,15 @@ async function handleBatchRetry() {
       }
     )
     const result = await batchRetryReviews(selectedIds.value)
-    ElMessage.success(`已提交 ${result.retried} 条重试任务`)
-    // 立即将已选中的记录状态更新为评审中
+    if (result.skipped > 0) {
+      ElMessage.success(`已提交 ${result.retried} 条重试任务，跳过 ${result.skipped} 条已完成记录`)
+    } else {
+      ElMessage.success(`已提交 ${result.retried} 条重试任务`)
+    }
+    // 立即将重试成功的记录状态更新为评审中
     const retryIdSet = new Set(selectedIds.value.map(String))
     for (const row of tableData.value) {
-      if (retryIdSet.has(String(row.id)) && (row.status === 'failed' || row.status === 'timeout' || row.status === 'completed')) {
+      if (retryIdSet.has(String(row.id)) && (row.status === 'failed' || row.status === 'timeout')) {
         row.status = 'in_progress'
         row.error_message = null
       }
