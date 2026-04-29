@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field, ConfigDict
 from sqlalchemy import select, func, delete as sql_delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from code_review.models.db import ApiCallLog, Project, ReviewTask, ReviewComment
+from code_review.models.db import ApiCallLog, Project, ReviewTask, ReviewComment, now_cst
 from code_review.infrastructure.cache import event_dedup_cache
 from code_review.adapters.factory import create_adapter
 from code_review.api.logs import ApiCallLogResponse
@@ -347,7 +347,7 @@ async def batch_retry_reviews(body: BatchRetryRequest, background_tasks: Backgro
     async with session_factory() as session:
         stmt = select(ReviewTask).where(
             ReviewTask.id.in_(body.task_ids),
-            ReviewTask.status.in_(["failed", "completed"]),
+            ReviewTask.status.in_(["failed", "completed", "timeout"]),
         )
         result = await session.execute(stmt)
         tasks = result.scalars().all()
@@ -424,7 +424,7 @@ async def create_manual_review(
         )
         parent_task = existing_parent.scalar_one_or_none()
 
-        event_id = f"manual_{body.project_id}_{body.mr_iid}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+        event_id = f"manual_{body.project_id}_{body.mr_iid}_{now_cst().strftime('%Y%m%d%H%M%S')}"
 
         platform_config = await orchestrator._get_platform_config(project.platform)
         if not platform_config:
@@ -636,6 +636,42 @@ async def get_review_logs(task_id: UUID, request: Request, revision: int | None 
         )
         result = await session.execute(stmt)
         return result.scalars().all()
+
+
+@router.post("/reviews/check-timeout")
+async def check_review_timeouts(request: Request):
+    """检查并标记超时的评审任务。
+
+    根据 review_timeout_seconds 配置，将 in_progress 状态超过阈值的任务标记为 timeout。
+    """
+    session_factory = request.app.state.session_factory
+    config = request.app.state.config
+    timeout_seconds = config.review.review_timeout_seconds
+
+    async with session_factory() as session:
+        now = datetime.now()
+        cutoff = now - timedelta(seconds=timeout_seconds)
+
+        stmt = select(ReviewTask).where(
+            ReviewTask.status == ReviewTask.Status.IN_PROGRESS,
+            ReviewTask.started_at.isnot(None),
+            ReviewTask.started_at < cutoff,
+        )
+        result = await session.execute(stmt)
+        timed_out = result.scalars().all()
+
+        count = 0
+        for task in timed_out:
+            task.status = ReviewTask.Status.TIMEOUT
+            task.error_message = f"评审超时（超过 {timeout_seconds} 秒）"
+            task.completed_at = now
+            count += 1
+            logger.info("评审任务超时: %s, started_at=%s", task.id, task.started_at)
+
+        if count:
+            await session.commit()
+
+    return {"checked": True, "timed_out": count, "timeout_seconds": timeout_seconds}
 
 
 @router.get("/health")

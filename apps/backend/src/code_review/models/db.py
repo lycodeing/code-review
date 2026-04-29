@@ -1,8 +1,16 @@
 """数据库 ORM 模型（SQLAlchemy async）。"""
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from enum import StrEnum
+
+# 东八区统一时区
+_SHANGHAI_TZ = timezone(timedelta(hours=8))
+
+
+def now_cst() -> datetime:
+    """返回当前东八区时间，所有时间字段统一使用此函数。"""
+    return datetime.now(tz=_SHANGHAI_TZ)
 
 from sqlalchemy import (
     Boolean,
@@ -36,8 +44,8 @@ class Project(Base):
     webhook_secret = Column(String(512), nullable=True, comment="Webhook 签名密钥")
     config = Column(JSON, nullable=True, comment="项目级配置覆盖（文件过滤、评论模式等）")
     enabled = Column(Integer, nullable=False, default=1, comment="是否启用")
-    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(tz=timezone.utc))
-    updated_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(tz=timezone.utc), onupdate=lambda: datetime.now(tz=timezone.utc))
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: now_cst())
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=lambda: now_cst(), onupdate=lambda: now_cst())
 
     reviews = relationship("ReviewTask", back_populates="project", cascade="all, delete-orphan")
 
@@ -55,6 +63,7 @@ class ReviewTask(Base):
         COMPLETED = "completed"
         FAILED = "failed"
         SKIPPED = "skipped"
+        TIMEOUT = "timeout"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False)
@@ -76,7 +85,7 @@ class ReviewTask(Base):
     celery_task_id = Column(String(255), nullable=True)
     started_at = Column(DateTime(timezone=True), nullable=True)
     completed_at = Column(DateTime(timezone=True), nullable=True)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(tz=timezone.utc))
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: now_cst())
     parent_id = Column(
         UUID(as_uuid=True),
         ForeignKey("review_tasks.id", ondelete="CASCADE"),
@@ -117,8 +126,8 @@ class PromptTemplate(Base):
     category = Column(String(64), nullable=False, default="default", comment="模板分类：python/java/go/default 等")
     locale = Column(String(10), nullable=False, default="zh", comment="语言标识：zh / en")
     enabled = Column(Integer, nullable=False, default=1, comment="是否启用：1 启用 / 0 禁用")
-    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(tz=timezone.utc))
-    updated_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(tz=timezone.utc), onupdate=lambda: datetime.now(tz=timezone.utc))
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: now_cst())
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=lambda: now_cst(), onupdate=lambda: now_cst())
 
     project_bindings = relationship(
         "ProjectPromptBinding",
@@ -150,7 +159,7 @@ class ReviewComment(Base):
     suggestion = Column(Text, nullable=True)
     platform_comment_id = Column(String(255), nullable=True, comment="平台上已发布的评论 ID")
     feedback = Column(String(16), nullable=True, comment="用户反馈: thumbs_up / thumbs_down")
-    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(tz=timezone.utc))
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: now_cst())
 
     task = relationship("ReviewTask", back_populates="comments")
 
@@ -169,8 +178,8 @@ class PlatformConfig(Base):
     api_url = Column(String(512), nullable=False, default="", comment="API 基础地址")
     enabled = Column(Boolean, nullable=False, default=True, comment="是否启用")
     description = Column(String(512), nullable=False, default="", comment="说明文字")
-    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(tz=timezone.utc))
-    updated_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(tz=timezone.utc), onupdate=lambda: datetime.now(tz=timezone.utc))
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: now_cst())
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=lambda: now_cst(), onupdate=lambda: now_cst())
 
     notification_bindings = relationship(
         "PlatformNotificationBinding",
@@ -194,8 +203,8 @@ class NotificationTemplate(Base):
     body_template = Column(Text, nullable=False, default="", comment="正文 Markdown 模板，支持 {{变量}} 语法")
     enabled = Column(Boolean, nullable=False, default=True, comment="是否启用")
     is_default = Column(Boolean, nullable=False, default=False, comment="是否为该渠道的内置默认模板（不可删除）")
-    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(tz=timezone.utc))
-    updated_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(tz=timezone.utc), onupdate=lambda: datetime.now(tz=timezone.utc))
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: now_cst())
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=lambda: now_cst(), onupdate=lambda: now_cst())
 
     # 渠道配置中引用此模板
     notification_configs = relationship(
@@ -238,8 +247,8 @@ class NotificationConfig(Base):
         nullable=True,
         comment="渠道默认模板，空时使用内置默认模板",
     )
-    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(tz=timezone.utc))
-    updated_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(tz=timezone.utc), onupdate=lambda: datetime.now(tz=timezone.utc))
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: now_cst())
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=lambda: now_cst(), onupdate=lambda: now_cst())
 
     platform_bindings = relationship(
         "PlatformNotificationBinding",
@@ -273,7 +282,7 @@ class PlatformNotificationBinding(Base):
         nullable=False,
     )
     enabled = Column(Boolean, nullable=False, default=True, comment="绑定是否启用")
-    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(tz=timezone.utc))
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: now_cst())
 
     platform = relationship("PlatformConfig", back_populates="notification_bindings")
     notification = relationship("NotificationConfig", back_populates="platform_bindings")
@@ -315,8 +324,8 @@ class LLMConfig(Base):
     )
     enabled = Column(Boolean, nullable=False, default=True, comment="是否启用")
     description = Column(String(512), nullable=False, default="", comment="说明文字")
-    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(tz=timezone.utc))
-    updated_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(tz=timezone.utc), onupdate=lambda: datetime.now(tz=timezone.utc))
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: now_cst())
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=lambda: now_cst(), onupdate=lambda: now_cst())
 
     project_bindings = relationship(
         "ProjectLLMBinding",
@@ -352,7 +361,7 @@ class ProjectLLMBinding(Base):
     is_default = Column(Boolean, nullable=False, default=False, comment="是否为项目默认配置")
     priority = Column(Integer, nullable=False, default=0, comment="优先级（数字越大优先级越高）")
     enabled = Column(Boolean, nullable=False, default=True, comment="绑定是否启用")
-    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(tz=timezone.utc))
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: now_cst())
 
     project = relationship("Project")
     llm_config = relationship("LLMConfig", back_populates="project_bindings")
@@ -385,7 +394,7 @@ class ProjectPromptBinding(Base):
     is_default = Column(Boolean, nullable=False, default=False, comment="是否为项目默认模板")
     priority = Column(Integer, nullable=False, default=0, comment="优先级（数字越大优先级越高）")
     enabled = Column(Boolean, nullable=False, default=True, comment="绑定是否启用")
-    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(tz=timezone.utc))
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: now_cst())
 
     project = relationship("Project")
     template = relationship("PromptTemplate", back_populates="project_bindings")
@@ -424,7 +433,7 @@ class ProjectNotificationTemplateBinding(Base):
         comment="指定模板，NULL 时降级到渠道默认模板",
     )
     enabled = Column(Boolean, nullable=False, default=True, comment="此绑定是否启用")
-    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(tz=timezone.utc))
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: now_cst())
 
     project = relationship("Project")
     notification = relationship("NotificationConfig")
@@ -454,8 +463,11 @@ class ApiCallLog(Base):
         NOTIFICATION = "notification"
 
     class CallStatus(StrEnum):
+        PENDING = "pending"
+        IN_PROGRESS = "in_progress"
         SUCCESS = "success"
         FAILED = "failed"
+        TIMEOUT = "timeout"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     task_id = Column(
@@ -475,7 +487,7 @@ class ApiCallLog(Base):
     status = Column(String(32), nullable=False, default=CallStatus.SUCCESS, comment="调用结果: success / failed")
     error_message = Column(Text, nullable=True, comment="失败时的错误详情")
     duration_ms = Column(Integer, nullable=True, comment="请求耗时（毫秒）")
-    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(tz=timezone.utc))
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: now_cst())
 
     task = relationship("ReviewTask", backref="api_call_logs")
 
@@ -504,8 +516,8 @@ class ReviewRule(Base):
     file_pattern = Column(String(512), nullable=False, default="**", comment="适用的文件 glob 模式")
     enabled = Column(Boolean, nullable=False, default=True, comment="是否启用")
     is_builtin = Column(Boolean, nullable=False, default=False, comment="是否为内置模板规则")
-    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(tz=timezone.utc))
-    updated_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(tz=timezone.utc), onupdate=lambda: datetime.now(tz=timezone.utc))
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: now_cst())
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=lambda: now_cst(), onupdate=lambda: now_cst())
 
     project_bindings = relationship(
         "ProjectRuleBinding",
@@ -537,7 +549,7 @@ class ProjectRuleBinding(Base):
         nullable=False,
     )
     enabled = Column(Boolean, nullable=False, default=True, comment="绑定是否启用")
-    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(tz=timezone.utc))
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: now_cst())
 
     project = relationship("Project")
     rule = relationship("ReviewRule", back_populates="project_bindings")
@@ -572,7 +584,7 @@ class CommentReply(Base):
     content = Column(Text, nullable=False, comment="回复内容")
     source = Column(String(32), nullable=False, default="user", comment="来源: user / llm / system")
     llm_context = Column(JSON, nullable=True, comment="LLM 对话上下文")
-    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(tz=timezone.utc))
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: now_cst())
 
     comment = relationship("ReviewComment", backref="replies")
     parent = relationship("CommentReply", remote_side="CommentReply.id", backref="children")

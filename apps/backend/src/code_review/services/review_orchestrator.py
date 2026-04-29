@@ -5,7 +5,6 @@
 
 import logging
 from dataclasses import replace
-from datetime import datetime, timezone
 from fnmatch import fnmatch
 from uuid import UUID
 
@@ -27,7 +26,7 @@ from code_review.infrastructure.langchain_reviewer import LangChainReviewer
 from code_review.infrastructure.notification_manager import NotificationManager
 from code_review.infrastructure.prompt_manager import PromptTemplateManager
 from code_review.models.config import AppConfig, LLMConfig
-from code_review.models.db import Base, Project, ReviewTask
+from code_review.models.db import Base, Project, ReviewTask, now_cst
 from code_review.models.db import ReviewComment as ReviewCommentDB
 from code_review.services.comment_aggregator import CommentAggregator
 from code_review.services.llm_config_service import LLMConfigService
@@ -268,7 +267,7 @@ class ReviewOrchestrator:
             try:
                 # 更新状态为评审中
                 task.status = ReviewTask.Status.IN_PROGRESS
-                task.started_at = datetime.now(tz=timezone.utc)
+                task.started_at = now_cst()
                 await session.commit()
 
                 # 获取项目配置
@@ -311,7 +310,7 @@ class ReviewOrchestrator:
                 if not filtered_changes:
                     task.status = ReviewTask.Status.COMPLETED
                     task.summary = "No reviewable files found after filtering."
-                    task.completed_at = datetime.now(tz=timezone.utc)
+                    task.completed_at = now_cst()
                     await session.commit()
                     return
 
@@ -482,7 +481,7 @@ class ReviewOrchestrator:
                 )
 
                 task.status = ReviewTask.Status.COMPLETED
-                task.completed_at = datetime.now(tz=timezone.utc)
+                task.completed_at = now_cst()
                 await session.commit()
 
                 logger.info(
@@ -494,7 +493,7 @@ class ReviewOrchestrator:
                 logger.error("Review failed for task %s: %s", task_id, e, exc_info=True)
                 task.status = ReviewTask.Status.FAILED
                 task.error_message = str(e)
-                task.completed_at = datetime.now(tz=timezone.utc)
+                task.completed_at = now_cst()
                 await session.commit()
 
     async def _find_project(

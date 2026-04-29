@@ -45,6 +45,27 @@ async def _save_notification_log(session_factory, task_id: UUID, result) -> None
         logger.warning("记录通知调用日志失败: %s", e)
 
 
+async def create_notification_log(session_factory, task_id: UUID, *, provider: str, url: str) -> UUID:
+    """通知发送前创建一条 in_progress 日志记录。"""
+    try:
+        from code_review.models.db import ApiCallLog
+        async with session_factory() as session:
+            log = ApiCallLog(
+                task_id=task_id,
+                call_type=ApiCallLog.CallType.NOTIFICATION,
+                provider=provider,
+                method="POST",
+                url=url,
+                status=ApiCallLog.CallStatus.IN_PROGRESS,
+            )
+            session.add(log)
+            await session.commit()
+            return log.id
+    except Exception as e:
+        logger.warning("创建通知日志失败: %s", e)
+        return UUID(int=0)
+
+
 class NotificationManager:
     """统一管理所有通知渠道，支持按配置启用/禁用。"""
 

@@ -1,5 +1,6 @@
 """FastAPI 应用入口。"""
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -28,7 +29,7 @@ from code_review.api.comments import router as comments_router
 from code_review.infrastructure.celery_app import init_celery
 from code_review.infrastructure.notification_manager import NotificationManager
 from code_review.models.config import AppConfig
-from code_review.models.db import Base
+from code_review.models.db import Base, ReviewTask, now_cst
 from code_review.services.review_orchestrator import ReviewOrchestrator
 from code_review.services.prompt_template_service import seed_default_templates
 
@@ -117,9 +118,17 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         app.state.engine = engine
 
         logger.info("Service started successfully")
+
+        # 启动超时检查后台任务
+        stop_event = asyncio.Event()
+        asyncio.create_task(
+            _timeout_check_loop(session_factory, config.review.review_timeout_seconds, stop_event)
+        )
+
         yield
 
         # 清理
+        stop_event.set()
         logger.info("Shutting down...")
         await orchestrator.close()
         await engine.dispose()
@@ -217,3 +226,38 @@ async def _seed_config_tables(session) -> None:
 
 # WSGI/ASGI 入口
 app = create_app()
+
+
+async def _timeout_check_loop(session_factory, timeout_seconds: int, stop_event: asyncio.Event) -> None:
+    """后台定时检查评审任务超时。"""
+    from datetime import datetime, timedelta
+    from sqlalchemy import select
+
+    logger.info("评审超时检查任务已启动，超时阈值: %d 秒", timeout_seconds)
+    while not stop_event.is_set():
+        try:
+            async with session_factory() as session:
+                now = now_cst()
+                cutoff = now - timedelta(seconds=timeout_seconds)
+                stmt = select(ReviewTask).where(
+                    ReviewTask.status == ReviewTask.Status.IN_PROGRESS,
+                    ReviewTask.started_at.isnot(None),
+                    ReviewTask.started_at < cutoff,
+                )
+                result = await session.execute(stmt)
+                timed_out = result.scalars().all()
+                for task in timed_out:
+                    task.status = ReviewTask.Status.TIMEOUT
+                    task.error_message = f"评审超时（超过 {timeout_seconds} 秒）"
+                    task.completed_at = now
+                    logger.warning("评审任务超时: %s, started_at=%s", task.id, task.started_at)
+                if timed_out:
+                    await session.commit()
+                    logger.info("标记 %d 个评审任务为超时", len(timed_out))
+        except Exception as e:
+            logger.error("超时检查失败: %s", e)
+
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=120)
+        except asyncio.TimeoutError:
+            pass

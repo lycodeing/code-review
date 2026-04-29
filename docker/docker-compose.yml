@@ -6,6 +6,7 @@ x-backend: &backend
     - path: ../apps/backend/configs/.env
       required: false
   environment:
+    - TZ=Asia/Shanghai
     - CODE_REVIEW__DATABASE__URL=postgresql+asyncpg://postgres:postgres@db:5432/code_review
     - CODE_REVIEW__REDIS__URL=redis://redis:6379/0
     - CODE_REVIEW__CELERY__BROKER_URL=redis://redis:6379/1
@@ -23,6 +24,8 @@ services:
       context: ../apps/frontend
       dockerfile: Dockerfile
     container_name: code-review-frontend
+    environment:
+      TZ: Asia/Shanghai
     ports:
       - "80:80"
     depends_on:
@@ -53,6 +56,8 @@ services:
     image: postgres:16-alpine
     container_name: code-review-db
     environment:
+      TZ: Asia/Shanghai
+      PGTZ: Asia/Shanghai
       POSTGRES_DB: code_review
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -70,6 +75,8 @@ services:
   redis:
     image: redis:7-alpine
     container_name: code-review-redis
+    environment:
+      TZ: Asia/Shanghai
     ports:
       - "6380:6379"
     volumes:

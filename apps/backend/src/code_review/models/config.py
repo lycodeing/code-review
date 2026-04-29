@@ -71,6 +71,7 @@ class ReviewConfig(BaseSettings):
     max_comments_per_mr: int = 50
     max_diff_lines: int = 5000  # 超过此行数截断
     severity_threshold_for_summary: int = 30  # 评论数超过此值时切换为摘要模式
+    review_timeout_seconds: int = 1800  # 评审超时时间（秒），默认 30 分钟
     exclude_patterns: list[str] = Field(
         default_factory=lambda: [
             "*.lock", "*.min.js", "*.min.css", "vendor/**",

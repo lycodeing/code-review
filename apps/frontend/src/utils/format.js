@@ -44,7 +44,9 @@ export const reviewStatusMap = {
   pending: { label: '等待中', type: 'info' },
   in_progress: { label: '评审中', type: 'warning' },
   completed: { label: '已完成', type: 'success' },
-  failed: { label: '失败', type: 'danger' }
+  failed: { label: '失败', type: 'danger' },
+  timeout: { label: '超时', type: 'danger' },
+  skipped: { label: '已跳过', type: 'info' }
 }
 
 /** 严重程度映射 */
