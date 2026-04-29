@@ -30,9 +30,14 @@ export function toggleLLMConfig(id, enabled) {
   return request.patch(`/llm-configs/${id}/enable`, { enabled })
 }
 
-/** 测试 LLM 配置连接 */
+/** 测试 LLM 配置连接（新建时使用，传入明文 API Key） */
 export function testLLMConnection(data) {
   return request.post('/llm-configs/test-connection', data)
+}
+
+/** 测试已有 LLM 配置连接（按 ID，后端解密真实 Key） */
+export function testLLMConfigById(configId) {
+  return request.post(`/llm-configs/${configId}/test`)
 }
 
 /** 获取项目的 LLM 绑定列表 */

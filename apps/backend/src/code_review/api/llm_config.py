@@ -175,47 +175,70 @@ async def toggle_llm_config(
 async def test_connection(
     data: TestConnectionRequest,
 ):
-    """测试 LLM 配置连接。"""
+    """测试 LLM 配置连接（用于新建配置时的手动测试）。"""
+    return await _do_test_connection(
+        model_name=data.model_name,
+        api_key=data.api_key,
+        api_base=data.api_base,
+    )
+
+
+@router.post("/{config_id}/test", response_model=TestConnectionResponse)
+async def test_existing_connection(
+    request: Request,
+    config_id: UUID,
+):
+    """测试已有 LLM 配置的连接（从数据库解密真实 API Key）。"""
+    session_factory = request.app.state.session_factory
+    async with session_factory() as session:
+        svc = LLMConfigService(session, request.app.state.config.server.secret_key)
+        config = await svc.get_config(config_id)
+        if not config:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="配置不存在")
+        real_key = await svc.decrypt_api_key(config.api_key)
+        return await _do_test_connection(
+            model_name=config.model_name,
+            api_key=real_key,
+            api_base=config.api_base,
+        )
+
+
+async def _do_test_connection(
+    model_name: str,
+    api_key: str,
+    api_base: str,
+) -> TestConnectionResponse:
+    """执行 LLM 连接测试的公共逻辑。"""
     start_time = time.time()
 
     try:
-        # 处理模型名称：去除提供商前缀（LangChain 不需要）
-        # 例如: "openai/claude-opus-4-7" -> "claude-opus-4-7"
-        model_name = data.model_name
-        if "/" in model_name:
-            model_name = model_name.split("/")[-1]
+        clean_model = model_name.split("/")[-1] if "/" in model_name else model_name
 
-        # 构造模型配置（测试连接时不传 temperature，避免某些模型不支持）
         kwargs = {
-            "model": model_name,
-            "api_key": data.api_key,
+            "model": clean_model,
+            "api_key": api_key,
             "max_tokens": 10,
             "timeout": 30,
-            "streaming": False,  # 非流式模式，一次性返回
+            "streaming": False,
         }
 
-        # 如果有自定义 base_url，使用它
-        if data.api_base:
-            kwargs["base_url"] = data.api_base
+        if api_base:
+            kwargs["base_url"] = api_base
 
-        logger.info(f"测试 LLM 连接: model={model_name}, base_url={data.api_base}")
+        logger.info(f"测试 LLM 连接: model={clean_model}, base_url={api_base}")
 
-        # 创建 LLM 实例
         llm = ChatOpenAI(**kwargs)
-
-        # 发送测试消息
         messages = [HumanMessage(content="Hello")]
-        response = await llm.ainvoke(messages)
+        await llm.ainvoke(messages)
 
         response_time = (time.time() - start_time) * 1000
-
         logger.info(f"LLM 连接测试成功: {response_time:.2f}ms")
 
         return TestConnectionResponse(
             success=True,
             message="连接成功",
             response_time_ms=round(response_time, 2),
-            model_info=data.model_name,
+            model_info=model_name,
         )
     except Exception as e:
         response_time = (time.time() - start_time) * 1000
