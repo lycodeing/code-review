@@ -66,6 +66,12 @@ const routes = [
         meta: { title: 'LLM 配置', icon: 'Cpu' }
       },
       {
+        path: 'review-rules',
+        name: 'ReviewRules',
+        component: () => import('@/views/rule/RuleList.vue'),
+        meta: { title: '评审规则', icon: 'Filter' }
+      },
+      {
         path: 'request-history',
         name: 'RequestHistory',
         component: () => import('@/views/log/ApiCallLogList.vue'),

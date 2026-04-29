@@ -42,15 +42,81 @@ class RuleResponse(BaseModel):
     message: str
     file_pattern: str
     enabled: bool
+    is_builtin: bool
     created_at: datetime
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
 
 
+class ImportTemplatesRequest(BaseModel):
+    """导入内置模板规则的请求体。"""
+    rule_ids: list[UUID]
+
+
 class RuleBindingRequest(BaseModel):
     rule_id: UUID
     enabled: bool = True
+
+
+@router.get("/templates", response_model=list[RuleResponse])
+async def list_rule_templates(request: Request):
+    """获取所有内置模板规则。"""
+    session_factory = request.app.state.session_factory
+    async with session_factory() as session:
+        stmt = select(ReviewRule).where(ReviewRule.is_builtin.is_(True)).order_by(ReviewRule.name)
+        result = await session.execute(stmt)
+        return result.scalars().all()
+
+
+@router.post("/import-templates", response_model=list[RuleResponse], status_code=201)
+async def import_rule_templates(body: ImportTemplatesRequest, request: Request):
+    """从内置模板导入规则（复制为非内置规则）。"""
+    session_factory = request.app.state.session_factory
+    async with session_factory() as session:
+        # 查询选中的内置规则
+        stmt = select(ReviewRule).where(
+            ReviewRule.id.in_(body.rule_ids),
+            ReviewRule.is_builtin.is_(True),
+        )
+        templates = (await session.execute(stmt)).scalars().all()
+
+        if not templates:
+            raise HTTPException(status_code=404, detail="未找到指定的内置模板规则")
+
+        created = []
+        for tpl in templates:
+            # 生成不重复的规则名称（追加 -copy 后缀，冲突时追加序号）
+            base_name = f"{tpl.name}-copy"
+            name = base_name
+            suffix = 1
+            while True:
+                existing = (await session.execute(
+                    select(ReviewRule).where(ReviewRule.name == name)
+                )).scalar_one_or_none()
+                if not existing:
+                    break
+                suffix += 1
+                name = f"{base_name}-{suffix}"
+
+            rule = ReviewRule(
+                name=name,
+                description=tpl.description,
+                rule_type=tpl.rule_type,
+                pattern=tpl.pattern,
+                severity=tpl.severity,
+                message=tpl.message,
+                file_pattern=tpl.file_pattern,
+                enabled=tpl.enabled,
+                is_builtin=False,
+            )
+            session.add(rule)
+            created.append(rule)
+
+        await session.commit()
+        for rule in created:
+            await session.refresh(rule)
+        return created
 
 
 @router.get("", response_model=list[RuleResponse])
