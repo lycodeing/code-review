@@ -1,7 +1,7 @@
 x-backend: &backend
   build:
-    context: ..
-    dockerfile: apps/backend/Dockerfile
+    context: ../apps/backend
+    dockerfile: Dockerfile
   env_file:
     - path: ../apps/backend/configs/.env
       required: false
@@ -18,6 +18,17 @@ x-backend: &backend
   restart: unless-stopped
 
 services:
+  frontend:
+    build:
+      context: ../apps/frontend
+      dockerfile: Dockerfile
+    container_name: code-review-frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - app
+    restart: unless-stopped
+
   app:
     <<: *backend
     container_name: code-review-app

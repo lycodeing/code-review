@@ -1,14 +1,11 @@
 """FastAPI 应用入口。"""
 
 import logging
-import os
 from contextlib import asynccontextmanager
-from pathlib import Path
 
 import structlog
 from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
-from fastapi.staticfiles import StaticFiles
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 
 from code_review.api.webhook import router as webhook_router
@@ -153,19 +150,11 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     app.include_router(comment_replies_router)
     app.include_router(comments_router)
 
-    # 根路径：优先 serve 前端静态文件，降级到 API 文档
-    static_dir = os.environ.get("STATIC_DIR", "")
-    if static_dir and Path(static_dir).is_dir():
-        # API 路由优先，前端静态文件兜底
-        app.mount("/", StaticFiles(directory=static_dir, html=True), name="frontend")
-
-        @app.get("/api-docs", include_in_schema=False)
-        async def api_docs():
-            return RedirectResponse(url="/docs")
-    else:
-        @app.get("/", include_in_schema=False)
-        async def root():
-            return RedirectResponse(url="/docs")
+    # 根路径重定向到 API 文档
+    @app.get("/", include_in_schema=False)
+    async def root():
+        """根路径重定向到 API 文档。"""
+        return RedirectResponse(url="/docs")
 
     return app
 
