@@ -132,6 +132,7 @@ class ReviewComment(Base):
     message = Column(Text, nullable=False)
     suggestion = Column(Text, nullable=True)
     platform_comment_id = Column(String(255), nullable=True, comment="平台上已发布的评论 ID")
+    feedback = Column(String(16), nullable=True, comment="用户反馈: thumbs_up / thumbs_down")
     created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(tz=timezone.utc))
 
     task = relationship("ReviewTask", back_populates="comments")
