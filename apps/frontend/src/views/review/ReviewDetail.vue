@@ -226,8 +226,12 @@
                     </el-tag>
                   </template>
                 </el-table-column>
-                <el-table-column prop="response_status" label="HTTP状态" width="90" align="center" />
-                <el-table-column prop="duration_ms" label="耗时(ms)" width="95" align="right" />
+                <el-table-column prop="response_status" label="HTTP状态" width="90" align="center">
+                  <template #default="{ row }">{{ row.response_status ?? '-' }}</template>
+                </el-table-column>
+                <el-table-column prop="duration_ms" label="耗时(ms)" width="95" align="right">
+                  <template #default="{ row }">{{ row.duration_ms != null ? row.duration_ms : '-' }}</template>
+                </el-table-column>
                 <el-table-column prop="error_message" label="错误信息" min-width="160" show-overflow-tooltip />
                 <el-table-column label="详情" width="70" align="center">
                   <template #default="{ row }">

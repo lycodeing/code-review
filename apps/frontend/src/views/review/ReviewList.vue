@@ -384,8 +384,15 @@ async function handleBatchRetry() {
     )
     const result = await batchRetryReviews(selectedIds.value)
     ElMessage.success(`已提交 ${result.retried} 条重试任务`)
+    // 立即将已选中的记录状态更新为评审中
+    const retryIdSet = new Set(selectedIds.value.map(String))
+    for (const row of tableData.value) {
+      if (retryIdSet.has(String(row.id)) && (row.status === 'failed' || row.status === 'timeout' || row.status === 'completed')) {
+        row.status = 'in_progress'
+        row.error_message = null
+      }
+    }
     selectedIds.value = []
-    loadData(filters.value)
   } catch (error) {
     if (error !== 'cancel') {
       ElMessage.error(error.message || '批量重试失败')
