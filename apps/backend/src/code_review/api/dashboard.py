@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Query, Request
 from sqlalchemy import select, func, case, cast, Date
 
-from code_review.models.db import ReviewTask, ReviewComment, Project
+from code_review.models.db import ReviewTask, ReviewComment, Project, ApiCallLog
 
 router = APIRouter(prefix="/api/v1/dashboard", tags=["dashboard"])
 
@@ -150,3 +150,80 @@ async def dashboard_trend(
             result.append({"date": ds, "total": 0, "completed": 0, "failed": 0, "critical": 0, "warning": 0})
 
     return {"days": days, "data": result}
+
+
+@router.get("/cost-analysis")
+async def dashboard_cost_analysis(request: Request):
+    """LLM 成本与效率分析：按项目、按模型、每日趋势及平均评审耗时。"""
+    session_factory = request.app.state.session_factory
+    since_30d = datetime.now(timezone.utc) - timedelta(days=30)
+
+    async with session_factory() as session:
+        by_project_stmt = (
+            select(
+                Project.name.label("project_name"),
+                func.count(ApiCallLog.id).label("total_calls"),
+                func.coalesce(func.sum(ApiCallLog.duration_ms), 0).label("total_duration_ms"),
+            )
+            .join(ReviewTask, ApiCallLog.task_id == ReviewTask.id)
+            .join(Project, ReviewTask.project_id == Project.id)
+            .where(ApiCallLog.call_type == "llm")
+            .group_by(Project.name)
+            .order_by(func.sum(ApiCallLog.duration_ms).desc())
+        )
+        by_project_rows = (await session.execute(by_project_stmt)).all()
+
+        by_model_stmt = (
+            select(
+                func.coalesce(ApiCallLog.provider, "unknown").label("provider"),
+                func.count(ApiCallLog.id).label("total_calls"),
+                func.coalesce(func.sum(ApiCallLog.duration_ms), 0).label("total_duration_ms"),
+            )
+            .where(ApiCallLog.call_type == "llm")
+            .group_by(ApiCallLog.provider)
+            .order_by(func.count(ApiCallLog.id).desc())
+        )
+        by_model_rows = (await session.execute(by_model_stmt)).all()
+
+        daily_stmt = (
+            select(
+                cast(ApiCallLog.created_at, Date).label("date"),
+                func.count(ApiCallLog.id).label("call_count"),
+                func.coalesce(func.sum(ApiCallLog.duration_ms), 0).label("total_duration_ms"),
+            )
+            .where(ApiCallLog.call_type == "llm", ApiCallLog.created_at >= since_30d)
+            .group_by(cast(ApiCallLog.created_at, Date))
+            .order_by(cast(ApiCallLog.created_at, Date))
+        )
+        daily_rows = (await session.execute(daily_stmt)).all()
+
+        avg_stmt = select(
+            func.avg(
+                func.extract("epoch", ReviewTask.completed_at - ReviewTask.created_at) * 1000
+            ).label("avg_ms")
+        ).where(ReviewTask.status == "completed", ReviewTask.completed_at.isnot(None))
+        avg_row = (await session.execute(avg_stmt)).one()
+
+    db_daily = {str(r.date): r for r in daily_rows}
+    daily_trend = []
+    for i in range(30):
+        d = (since_30d + timedelta(days=i + 1)).date()
+        ds = str(d)
+        if ds in db_daily:
+            r = db_daily[ds]
+            daily_trend.append({"date": ds, "call_count": r.call_count, "total_duration_ms": r.total_duration_ms})
+        else:
+            daily_trend.append({"date": ds, "call_count": 0, "total_duration_ms": 0})
+
+    return {
+        "by_project": [
+            {"project_name": r.project_name, "total_calls": r.total_calls, "total_duration_ms": r.total_duration_ms}
+            for r in by_project_rows
+        ],
+        "by_model": [
+            {"provider": r.provider, "total_calls": r.total_calls, "total_duration_ms": r.total_duration_ms}
+            for r in by_model_rows
+        ],
+        "daily_trend": daily_trend,
+        "avg_review_duration_ms": round(avg_row.avg_ms) if avg_row.avg_ms else 0,
+    }
