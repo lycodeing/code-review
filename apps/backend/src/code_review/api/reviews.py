@@ -7,6 +7,7 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Request, BackgroundTasks
 from pydantic import BaseModel, Field, ConfigDict
 from sqlalchemy import select, func, delete as sql_delete
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from code_review.models.db import ApiCallLog, Project, ReviewTask, ReviewComment
 from code_review.infrastructure.cache import event_dedup_cache
@@ -86,6 +87,109 @@ class NotifyResultResponse(BaseModel):
     channels: dict[str, bool]
 
 
+# --------------- 辅助函数（消除重复代码） ---------------
+
+
+def _escape_like(text: str) -> str:
+    """转义 LIKE 通配符，防止 keyword 中的 % 和 _ 被当作通配符。"""
+    return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+async def _find_latest_child(session: AsyncSession, parent_id: UUID) -> ReviewTask | None:
+    """查找主记录的最新子版本。"""
+    stmt = (
+        select(ReviewTask)
+        .where(ReviewTask.parent_id == parent_id)
+        .order_by(ReviewTask.revision.desc())
+        .limit(1)
+    )
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
+def _merge_parent_with_child(parent: ReviewTask, child: ReviewTask | None) -> ReviewTaskResponse:
+    """将主记录元信息与子版本状态信息合并为响应。"""
+    if child:
+        return ReviewTaskResponse(
+            id=parent.id,
+            project_id=parent.project_id,
+            mr_iid=parent.mr_iid,
+            mr_title=parent.mr_title,
+            mr_author=parent.mr_author,
+            mr_url=parent.mr_url,
+            source_branch=parent.source_branch,
+            target_branch=parent.target_branch,
+            status=child.status,
+            trigger_action=child.trigger_action,
+            model_name=child.model_name,
+            total_comments=child.total_comments,
+            critical_count=child.critical_count,
+            warning_count=child.warning_count,
+            summary=child.summary,
+            error_message=child.error_message,
+            started_at=child.started_at,
+            completed_at=child.completed_at,
+            created_at=parent.created_at,
+            parent_id=None,
+            revision=child.revision,
+            is_latest=True,
+            latest_task_id=child.id,
+        )
+    return ReviewTaskResponse(
+        id=parent.id,
+        project_id=parent.project_id,
+        mr_iid=parent.mr_iid,
+        mr_title=parent.mr_title,
+        mr_author=parent.mr_author,
+        mr_url=parent.mr_url,
+        source_branch=parent.source_branch,
+        target_branch=parent.target_branch,
+        status=parent.status,
+        trigger_action=parent.trigger_action,
+        model_name=parent.model_name,
+        total_comments=parent.total_comments,
+        critical_count=parent.critical_count,
+        warning_count=parent.warning_count,
+        summary=parent.summary,
+        error_message=parent.error_message,
+        started_at=parent.started_at,
+        completed_at=parent.completed_at,
+        created_at=parent.created_at,
+        parent_id=None,
+        revision=parent.revision,
+        is_latest=True,
+        latest_task_id=None,
+    )
+
+
+async def _resolve_revision_task_id(
+    session: AsyncSession, task: ReviewTask, revision: int | None = None,
+) -> UUID:
+    """根据 revision 参数解析实际要查询的 task_id。
+
+    revision=1 时回退到主记录自身（主记录本身就是第 1 版）。
+    无 revision 时返回最新子版本或主记录。
+    """
+    if task.parent_id is not None:
+        return task.id
+
+    if revision is not None:
+        # revision=1 对应主记录自身
+        if revision <= 1:
+            return task.id
+        rev_stmt = select(ReviewTask).where(
+            ReviewTask.parent_id == task.id,
+            ReviewTask.revision == revision,
+        )
+        rev_task = (await session.execute(rev_stmt)).scalar_one_or_none()
+        return rev_task.id if rev_task else task.id
+
+    latest = await _find_latest_child(session, task.id)
+    return latest.id if latest else task.id
+
+
+# --------------- API 端点 ---------------
+
+
 @router.get("/reviews", response_model=list[ReviewTaskResponse])
 async def list_reviews(
     request: Request,
@@ -97,7 +201,6 @@ async def list_reviews(
 ):
     session_factory = request.app.state.session_factory
     async with session_factory() as session:
-        # 默认只返回主记录（parent_id IS NULL）
         stmt = (
             select(ReviewTask)
             .where(ReviewTask.parent_id.is_(None))
@@ -108,78 +211,28 @@ async def list_reviews(
         if status:
             stmt = stmt.where(ReviewTask.status == status)
         if keyword:
-            stmt = stmt.where(ReviewTask.mr_title.ilike(f"%{keyword}%"))
+            stmt = stmt.where(ReviewTask.mr_title.ilike(f"%{_escape_like(keyword)}%", escape="\\"))
         stmt = stmt.offset(offset).limit(min(limit, 100))
         result = await session.execute(stmt)
         tasks = result.scalars().all()
 
-        # 为每个主记录查找最新子版本，补充状态信息
-        response = []
-        for task in tasks:
-            # 查找最新子版本
-            latest_stmt = (
+        # 批量查询所有主记录的最新子版本（解决 N+1）
+        parent_ids = [t.id for t in tasks]
+        children_map: dict[UUID, ReviewTask] = {}
+        if parent_ids:
+            child_stmt = (
                 select(ReviewTask)
-                .where(ReviewTask.parent_id == task.id)
-                .order_by(ReviewTask.revision.desc())
-                .limit(1)
+                .where(ReviewTask.parent_id.in_(parent_ids))
+                .order_by(ReviewTask.parent_id, ReviewTask.revision.desc())
             )
-            latest_child = (await session.execute(latest_stmt)).scalar_one_or_none()
+            child_rows = (await session.execute(child_stmt)).scalars().all()
+            seen: set[UUID] = set()
+            for child in child_rows:
+                if child.parent_id and child.parent_id not in seen:
+                    children_map[child.parent_id] = child
+                    seen.add(child.parent_id)
 
-            if latest_child:
-                resp = ReviewTaskResponse(
-                    id=task.id,
-                    project_id=task.project_id,
-                    mr_iid=task.mr_iid,
-                    mr_title=task.mr_title,
-                    mr_author=task.mr_author,
-                    mr_url=task.mr_url,
-                    source_branch=task.source_branch,
-                    target_branch=task.target_branch,
-                    status=latest_child.status,
-                    trigger_action=latest_child.trigger_action,
-                    model_name=latest_child.model_name,
-                    total_comments=latest_child.total_comments,
-                    critical_count=latest_child.critical_count,
-                    warning_count=latest_child.warning_count,
-                    summary=latest_child.summary,
-                    error_message=latest_child.error_message,
-                    started_at=latest_child.started_at,
-                    completed_at=latest_child.completed_at,
-                    created_at=task.created_at,
-                    parent_id=None,
-                    revision=latest_child.revision,
-                    is_latest=True,
-                    latest_task_id=latest_child.id,
-                )
-            else:
-                resp = ReviewTaskResponse(
-                    id=task.id,
-                    project_id=task.project_id,
-                    mr_iid=task.mr_iid,
-                    mr_title=task.mr_title,
-                    mr_author=task.mr_author,
-                    mr_url=task.mr_url,
-                    source_branch=task.source_branch,
-                    target_branch=task.target_branch,
-                    status=task.status,
-                    trigger_action=task.trigger_action,
-                    model_name=task.model_name,
-                    total_comments=task.total_comments,
-                    critical_count=task.critical_count,
-                    warning_count=task.warning_count,
-                    summary=task.summary,
-                    error_message=task.error_message,
-                    started_at=task.started_at,
-                    completed_at=task.completed_at,
-                    created_at=task.created_at,
-                    parent_id=None,
-                    revision=task.revision,
-                    is_latest=True,
-                    latest_task_id=None,
-                )
-            response.append(resp)
-
-        return response
+        return [_merge_parent_with_child(t, children_map.get(t.id)) for t in tasks]
 
 
 @router.get("/reviews/{task_id}", response_model=ReviewTaskResponse)
@@ -190,41 +243,9 @@ async def get_review(task_id: UUID, request: Request):
         if not task:
             raise HTTPException(status_code=404, detail="Review task not found")
 
-        # 如果是主记录，查找最新子版本的状态
         if task.parent_id is None:
-            latest_stmt = (
-                select(ReviewTask)
-                .where(ReviewTask.parent_id == task.id)
-                .order_by(ReviewTask.revision.desc())
-                .limit(1)
-            )
-            latest_child = (await session.execute(latest_stmt)).scalar_one_or_none()
-            if latest_child:
-                return ReviewTaskResponse(
-                    id=task.id,
-                    project_id=task.project_id,
-                    mr_iid=task.mr_iid,
-                    mr_title=task.mr_title,
-                    mr_author=task.mr_author,
-                    mr_url=task.mr_url,
-                    source_branch=task.source_branch,
-                    target_branch=task.target_branch,
-                    status=latest_child.status,
-                    trigger_action=latest_child.trigger_action,
-                    model_name=latest_child.model_name,
-                    total_comments=latest_child.total_comments,
-                    critical_count=latest_child.critical_count,
-                    warning_count=latest_child.warning_count,
-                    summary=latest_child.summary,
-                    error_message=latest_child.error_message,
-                    started_at=latest_child.started_at,
-                    completed_at=latest_child.completed_at,
-                    created_at=task.created_at,
-                    parent_id=None,
-                    revision=latest_child.revision,
-                    is_latest=True,
-                    latest_task_id=latest_child.id,
-                )
+            latest = await _find_latest_child(session, task.id)
+            return _merge_parent_with_child(task, latest)
 
         return task
 
@@ -237,29 +258,7 @@ async def get_review_comments(task_id: UUID, request: Request, revision: int | N
         if not task:
             raise HTTPException(status_code=404, detail="Review task not found")
 
-        # 确定实际查询的 task_id
-        actual_task_id = task_id
-        if task.parent_id is None:
-            if revision:
-                # 查指定 revision
-                rev_stmt = select(ReviewTask).where(
-                    ReviewTask.parent_id == task.id,
-                    ReviewTask.revision == revision,
-                )
-                rev_task = (await session.execute(rev_stmt)).scalar_one_or_none()
-                if rev_task:
-                    actual_task_id = rev_task.id
-            else:
-                # 默认查最新子版本
-                latest_stmt = (
-                    select(ReviewTask)
-                    .where(ReviewTask.parent_id == task.id)
-                    .order_by(ReviewTask.revision.desc())
-                    .limit(1)
-                )
-                latest_child = (await session.execute(latest_stmt)).scalar_one_or_none()
-                if latest_child:
-                    actual_task_id = latest_child.id
+        actual_task_id = await _resolve_revision_task_id(session, task, revision)
 
         stmt = (
             select(ReviewComment)
@@ -279,10 +278,8 @@ async def get_review_revisions(task_id: UUID, request: Request):
         if not task:
             raise HTTPException(status_code=404, detail="评审记录不存在")
 
-        # 如果是子版本，找到其主记录
         parent_id = task.parent_id or task.id
 
-        # 查找主记录 + 所有子版本
         stmt = (
             select(ReviewTask)
             .where(
@@ -417,17 +414,17 @@ async def create_manual_review(
         if not project.enabled:
             raise HTTPException(status_code=400, detail="项目未启用")
 
-        event_id = f"manual_{body.project_id}_{body.mr_iid}"
-        stmt = select(ReviewTask).where(
-            ReviewTask.project_id == body.project_id,
-            ReviewTask.mr_iid == body.mr_iid,
-            ReviewTask.event_id == event_id,
-        )
-        if (await session.execute(stmt)).scalar_one_or_none():
-            raise HTTPException(
-                status_code=409,
-                detail="该 MR 已存在评审记录，请先删除原有记录后再手动触发",
+        # 检查是否已存在该 PR 的主记录（适配 revision 系统）
+        existing_parent = await session.execute(
+            select(ReviewTask).where(
+                ReviewTask.project_id == body.project_id,
+                ReviewTask.mr_iid == body.mr_iid,
+                ReviewTask.parent_id.is_(None),
             )
+        )
+        parent_task = existing_parent.scalar_one_or_none()
+
+        event_id = f"manual_{body.project_id}_{body.mr_iid}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
 
         platform_config = await orchestrator._get_platform_config(project.platform)
         if not platform_config:
@@ -444,18 +441,43 @@ async def create_manual_review(
             logger.error(f"获取 MR 信息失败: {e}")
             raise HTTPException(status_code=400, detail=f"获取 MR 信息失败: {str(e)}")
 
-        task = ReviewTask(
-            project_id=body.project_id,
-            mr_iid=body.mr_iid,
-            trigger_action=body.trigger_action,
-            event_id=event_id,
-            mr_title=mr_info.title,
-            mr_author=mr_info.author,
-            mr_url=mr_info.web_url or mr_info.url,
-            source_branch=mr_info.source_branch,
-            target_branch=mr_info.target_branch,
-            status=ReviewTask.Status.PENDING,
-        )
+        if parent_task:
+            # 已有主记录，创建子版本
+            max_rev = (await session.execute(
+                select(func.coalesce(func.max(ReviewTask.revision), 0))
+                .where(ReviewTask.parent_id == parent_task.id)
+            )).scalar()
+            task = ReviewTask(
+                project_id=body.project_id,
+                mr_iid=body.mr_iid,
+                trigger_action=body.trigger_action,
+                event_id=event_id,
+                mr_title=mr_info.title,
+                mr_author=mr_info.author,
+                mr_url=mr_info.web_url or mr_info.url,
+                source_branch=mr_info.source_branch,
+                target_branch=mr_info.target_branch,
+                status=ReviewTask.Status.PENDING,
+                parent_id=parent_task.id,
+                revision=max_rev + 1,
+                is_latest=True,
+            )
+        else:
+            task = ReviewTask(
+                project_id=body.project_id,
+                mr_iid=body.mr_iid,
+                trigger_action=body.trigger_action,
+                event_id=event_id,
+                mr_title=mr_info.title,
+                mr_author=mr_info.author,
+                mr_url=mr_info.web_url or mr_info.url,
+                source_branch=mr_info.source_branch,
+                target_branch=mr_info.target_branch,
+                status=ReviewTask.Status.PENDING,
+                parent_id=None,
+                revision=1,
+                is_latest=True,
+            )
         session.add(task)
         await session.commit()
         await session.refresh(task)
@@ -473,7 +495,7 @@ async def create_manual_review(
 
 @router.post("/reviews/{task_id}/retry", response_model=ReviewTaskResponse)
 async def retry_review(task_id: UUID, background_tasks: BackgroundTasks, request: Request):
-    """重试失败的评审任务。"""
+    """重试失败的评审任务。如果是主记录，则重试最新子版本。"""
     session_factory = request.app.state.session_factory
     orchestrator = request.app.state.orchestrator
 
@@ -481,37 +503,46 @@ async def retry_review(task_id: UUID, background_tasks: BackgroundTasks, request
         task = await session.get(ReviewTask, task_id)
         if not task:
             raise HTTPException(status_code=404, detail="评审记录不存在")
-        if task.status == ReviewTask.Status.IN_PROGRESS:
+
+        # 主记录 → 找最新子版本进行重试
+        retry_task = task
+        if task.parent_id is None:
+            latest = await _find_latest_child(session, task.id)
+            if latest:
+                retry_task = latest
+
+        if retry_task.status == ReviewTask.Status.IN_PROGRESS:
             raise HTTPException(status_code=409, detail="评审任务正在执行中，无法重试")
 
-        task.status = ReviewTask.Status.PENDING
-        task.error_message = None
-        task.started_at = None
-        task.completed_at = None
+        retry_task.status = ReviewTask.Status.PENDING
+        retry_task.error_message = None
+        retry_task.started_at = None
+        retry_task.completed_at = None
         await session.commit()
-        await session.refresh(task)
+        await session.refresh(retry_task)
 
+    actual_id = str(retry_task.id)
     from code_review.infrastructure.celery_app import get_celery
     try:
         celery = get_celery()
         celery_result = celery.send_task(
             "code_review.execute_review",
-            args=[str(task_id)],
+            args=[actual_id],
             queue="review",
         )
         async with session_factory() as session:
-            db_task = await session.get(ReviewTask, task_id)
+            db_task = await session.get(ReviewTask, retry_task.id)
             if db_task:
                 db_task.celery_task_id = celery_result.id
                 await session.commit()
     except Exception as e:
         logger.warning("Celery 分发失败，降级为同步执行: %s", e)
-        background_tasks.add_task(orchestrator.execute_review, str(task_id))
+        background_tasks.add_task(orchestrator.execute_review, actual_id)
 
     async with session_factory() as session:
-        refreshed = await session.get(ReviewTask, task_id)
-    logger.info("重试评审任务: %s", task_id)
-    return refreshed or task
+        refreshed = await session.get(ReviewTask, retry_task.id)
+    logger.info("重试评审任务: %s", actual_id)
+    return refreshed or retry_task
 
 
 @router.post("/reviews/{task_id}/notify", response_model=NotifyResultResponse)
@@ -531,7 +562,6 @@ async def send_review_notification(task_id: UUID, request: Request):
         if not project:
             raise HTTPException(status_code=404, detail="项目不存在")
 
-        # 在 session 内读取所有需要的字段
         task_id_val = task.id
         project_id_val = task.project_id
         platform_val = project.platform
@@ -597,27 +627,7 @@ async def get_review_logs(task_id: UUID, request: Request, revision: int | None 
         if not task:
             raise HTTPException(status_code=404, detail="评审记录不存在")
 
-        # 确定实际查询的 task_id
-        actual_task_id = task_id
-        if task.parent_id is None:
-            if revision:
-                rev_stmt = select(ReviewTask).where(
-                    ReviewTask.parent_id == task.id,
-                    ReviewTask.revision == revision,
-                )
-                rev_task = (await session.execute(rev_stmt)).scalar_one_or_none()
-                if rev_task:
-                    actual_task_id = rev_task.id
-            else:
-                latest_stmt = (
-                    select(ReviewTask)
-                    .where(ReviewTask.parent_id == task.id)
-                    .order_by(ReviewTask.revision.desc())
-                    .limit(1)
-                )
-                latest_child = (await session.execute(latest_stmt)).scalar_one_or_none()
-                if latest_child:
-                    actual_task_id = latest_child.id
+        actual_task_id = await _resolve_revision_task_id(session, task, revision)
 
         stmt = (
             select(ApiCallLog)

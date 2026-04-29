@@ -17,7 +17,7 @@ ALTER TABLE review_tasks
 CREATE INDEX IF NOT EXISTS ix_review_parent_id ON review_tasks(parent_id);
 
 -- 复合索引：按 project_id + mr_iid 查找主记录/最新版本
-CREATE INDEX IF NOT EXISTS ix_review_is_latest ON review_tasks(project_id, mr_iid);
+CREATE INDEX IF NOT EXISTS ix_review_project_mr_iid ON review_tasks(project_id, mr_iid);
 
 -- 将已有记录标记为主记录（parent_id=NULL, revision=1, is_latest=TRUE）
 -- 默认值已覆盖，无需额外 UPDATE

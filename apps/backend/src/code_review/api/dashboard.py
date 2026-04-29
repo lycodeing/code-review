@@ -61,7 +61,7 @@ async def dashboard_stats(
         sev_stmt = (
             select(ReviewComment.severity, func.count().label("count"))
             .join(ReviewTask, ReviewComment.task_id == ReviewTask.id)
-            .where(period_filter)
+            .where(period_filter, ReviewTask.parent_id.is_(None))
             .group_by(ReviewComment.severity)
         )
         sev_rows = (await session.execute(sev_stmt)).all()
@@ -74,7 +74,7 @@ async def dashboard_stats(
                 func.count(ReviewTask.id).label("review_count"),
             )
             .join(ReviewTask, ReviewTask.project_id == Project.id)
-            .where(period_filter)
+            .where(period_filter, ReviewTask.parent_id.is_(None))
             .group_by(Project.id, Project.name)
             .order_by(func.count(ReviewTask.id).desc())
             .limit(5)
@@ -167,7 +167,7 @@ async def dashboard_cost_analysis(request: Request):
             )
             .join(ReviewTask, ApiCallLog.task_id == ReviewTask.id)
             .join(Project, ReviewTask.project_id == Project.id)
-            .where(ApiCallLog.call_type == "llm")
+            .where(ApiCallLog.call_type == "llm", ReviewTask.parent_id.is_(None))
             .group_by(Project.name)
             .order_by(func.sum(ApiCallLog.duration_ms).desc())
         )
@@ -205,6 +205,7 @@ async def dashboard_cost_analysis(request: Request):
             ReviewTask.status == "completed",
             ReviewTask.started_at.isnot(None),
             ReviewTask.completed_at.isnot(None),
+            ReviewTask.parent_id.is_(None),
         )
         avg_row = (await session.execute(avg_stmt)).one()
 

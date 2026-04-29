@@ -74,7 +74,7 @@ CREATE INDEX IF NOT EXISTS idx_review_project ON review_tasks(project_id);
 CREATE INDEX IF NOT EXISTS ix_review_tasks_created_at ON review_tasks(created_at);
 CREATE INDEX IF NOT EXISTS ix_review_tasks_project_created ON review_tasks(project_id, created_at);
 CREATE INDEX IF NOT EXISTS ix_review_parent_id ON review_tasks(parent_id);
-CREATE INDEX IF NOT EXISTS ix_review_is_latest ON review_tasks(project_id, mr_iid);
+CREATE INDEX IF NOT EXISTS ix_review_project_mr_iid ON review_tasks(project_id, mr_iid);
 
 COMMENT ON COLUMN review_tasks.parent_id IS '父记录 ID（NULL 为主记录，非 NULL 为子版本）';
 COMMENT ON COLUMN review_tasks.revision IS '版本号（第几次 push）';

@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from fnmatch import fnmatch
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from code_review.adapters.factory import create_adapter
@@ -164,34 +164,37 @@ class ReviewOrchestrator:
                 )
                 return None
 
-            # 查找该 PR 是否已有主记录
+            # 查找该 PR 是否已有主记录（FOR UPDATE 防止并发创建重复主记录）
             existing = await session.execute(
                 select(ReviewTask).where(
                     ReviewTask.project_id == project.id,
                     ReviewTask.mr_iid == event.mr_iid,
                     ReviewTask.parent_id.is_(None),
-                )
+                ).with_for_update()
             )
             parent_task = existing.scalar_one_or_none()
 
             if parent_task:
-                # 已有主记录：将旧的 is_latest 标记清除，创建子版本
                 parent_task.is_latest = False
-                # 更新主记录的 MR 元信息（保持最新）
                 parent_task.mr_title = event.mr_title or parent_task.mr_title
                 parent_task.mr_author = event.mr_author or parent_task.mr_author
                 parent_task.mr_url = event.mr_url or parent_task.mr_url
                 parent_task.source_branch = event.source_branch or parent_task.source_branch
                 parent_task.target_branch = event.target_branch or parent_task.target_branch
 
-                # 计算新的 revision 号
-                revision_stmt = select(
-                    func.count()
-                ).where(
-                    ReviewTask.parent_id == parent_task.id,
+                # 批量清除所有旧子版本的 is_latest 标记
+                await session.execute(
+                    update(ReviewTask)
+                    .where(ReviewTask.parent_id == parent_task.id, ReviewTask.is_latest.is_(True))
+                    .values(is_latest=False)
                 )
-                child_count = (await session.execute(revision_stmt)).scalar() or 0
-                new_revision = child_count + 1
+
+                # 使用 MAX(revision) 而非 COUNT 防止并发产生相同 revision 号
+                max_rev = (await session.execute(
+                    select(func.coalesce(func.max(ReviewTask.revision), 0))
+                    .where(ReviewTask.parent_id == parent_task.id)
+                )).scalar()
+                new_revision = max_rev + 1
 
                 task = ReviewTask(
                     project_id=project.id,
