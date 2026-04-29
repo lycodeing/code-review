@@ -19,6 +19,7 @@
             <el-option label="评审中" value="in_progress" />
             <el-option label="已完成" value="completed" />
             <el-option label="失败" value="failed" />
+            <el-option label="超时" value="timeout" />
           </el-select>
         </el-form-item>
         <el-form-item label="MR 标题">
@@ -115,7 +116,7 @@
                 详情
               </el-button>
               <el-button
-                v-if="row.status === 'failed'"
+                v-if="row.status === 'failed' || row.status === 'timeout'"
                 text
                 type="warning"
                 size="small"
@@ -267,10 +268,14 @@ function handleSelectionChange(selection) {
 async function handleRetry(row) {
   try {
     retryingIds.value.add(row.id)
+    // 立即将状态更新为评审中
+    row.status = 'in_progress'
+    row.error_message = null
     await retryReview(row.id)
     ElMessage.success('已重新提交评审任务')
-    loadData(filters.value)
   } catch (error) {
+    // 失败时回滚
+    row.status = 'failed'
     ElMessage.error(error.message || '重试失败')
   } finally {
     retryingIds.value.delete(row.id)

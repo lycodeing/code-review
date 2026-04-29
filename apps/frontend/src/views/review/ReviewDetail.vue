@@ -8,7 +8,7 @@
       <template #extra>
         <div style="display: flex; gap: 8px; align-items: center">
           <el-button
-            v-if="detail.status === 'failed'"
+            v-if="detail.status === 'failed' || detail.status === 'timeout'"
             type="warning"
             :loading="retrying"
             @click="handleRetry"
@@ -39,7 +39,7 @@
           </div>
         </div>
       </template>
-      <div class="revision-list">
+      <TransitionGroup name="revision-fade" tag="div" class="revision-list">
         <div
           v-for="rev in sortedRevisions"
           :key="rev.id"
@@ -59,7 +59,7 @@
             <span class="revision-time">{{ formatTime(rev.created_at) }}</span>
           </div>
         </div>
-      </div>
+      </TransitionGroup>
     </el-card>
 
     <div v-loading="loading" style="margin-top: 20px">
@@ -125,29 +125,31 @@
             </div>
 
             <div v-if="comments.length && commentViewMode === 'flat'">
-              <div v-for="comment in filteredComments" :key="comment.id" class="comment-item">
-                <div class="comment-header">
-                  <div class="comment-file">
-                    <el-icon><Document /></el-icon>
-                    <span>{{ comment.file_path }}</span>
+              <TransitionGroup name="comment-slide" tag="div">
+                <div v-for="comment in filteredComments" :key="comment.id" class="comment-item">
+                  <div class="comment-header">
+                    <div class="comment-file">
+                      <el-icon><Document /></el-icon>
+                      <span>{{ comment.file_path }}</span>
+                    </div>
+                    <div class="comment-meta">
+                      <StatusTag :status="comment.severity" type="severity" />
+                      <span v-if="comment.line_start" class="line-range">
+                        L{{ comment.line_start }}{{ comment.line_end !== comment.line_start ? ` - L${comment.line_end}` : '' }}
+                      </span>
+                    </div>
                   </div>
-                  <div class="comment-meta">
-                    <StatusTag :status="comment.severity" type="severity" />
-                    <span v-if="comment.line_start" class="line-range">
-                      L{{ comment.line_start }}{{ comment.line_end !== comment.line_start ? ` - L${comment.line_end}` : '' }}
-                    </span>
+                  <div class="comment-body md-content" v-html="renderMarkdown(comment.message)" />
+                  <div v-if="comment.suggestion" class="comment-suggestion">
+                    <strong>建议修复：</strong>
+                    <div class="md-content" v-html="renderMarkdown(comment.suggestion)" />
+                  </div>
+                  <div class="comment-feedback">
+                    <el-button text size="small" :type="comment.feedback === 'thumbs_up' ? 'primary' : ''" @click="handleFeedback(comment, 'thumbs_up')">👍 有用</el-button>
+                    <el-button text size="small" :type="comment.feedback === 'thumbs_down' ? 'danger' : ''" @click="handleFeedback(comment, 'thumbs_down')">👎 无用</el-button>
                   </div>
                 </div>
-                <div class="comment-body md-content" v-html="renderMarkdown(comment.message)" />
-                <div v-if="comment.suggestion" class="comment-suggestion">
-                  <strong>建议修复：</strong>
-                  <div class="md-content" v-html="renderMarkdown(comment.suggestion)" />
-                </div>
-                <div class="comment-feedback">
-                  <el-button text size="small" :type="comment.feedback === 'thumbs_up' ? 'primary' : ''" @click="handleFeedback(comment, 'thumbs_up')">👍 有用</el-button>
-                  <el-button text size="small" :type="comment.feedback === 'thumbs_down' ? 'danger' : ''" @click="handleFeedback(comment, 'thumbs_down')">👎 无用</el-button>
-                </div>
-              </div>
+              </TransitionGroup>
               <el-empty v-if="!filteredComments.length" description="没有匹配的评论" :image-size="60" />
             </div>
 
@@ -214,8 +216,13 @@
                 <el-table-column prop="provider" label="提供商" width="150" show-overflow-tooltip />
                 <el-table-column prop="status" label="结果" width="90" align="center">
                   <template #default="{ row }">
-                    <el-tag :type="row.status === 'success' ? 'success' : 'danger'" size="small">
-                      {{ row.status === 'success' ? '成功' : '失败' }}
+                    <el-tag
+                      :type="logStatusMap[row.status]?.type || 'info'"
+                      size="small"
+                      :class="{ 'status-pulse': row.status === 'in_progress' }"
+                    >
+                      <el-icon v-if="row.status === 'in_progress'" class="is-loading" style="margin-right: 2px"><Loading /></el-icon>
+                      {{ logStatusMap[row.status]?.label || row.status }}
                     </el-tag>
                   </template>
                 </el-table-column>
@@ -280,7 +287,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { RefreshRight, Bell, Document, Clock } from '@element-plus/icons-vue'
+import { RefreshRight, Bell, Document, Clock, Loading } from '@element-plus/icons-vue'
 import { getReview, getReviewComments, retryReview, sendReviewNotification, updateCommentFeedback, getReviewRevisions } from '@/api/reviews'
 import { getReviewLogs } from '@/api/logs'
 import { formatDateTime } from '@/utils/format'
@@ -360,7 +367,15 @@ function formatTime(dt) {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }
 
-const statusLabel = { completed: '完成', failed: '失败', pending: '等待中', in_progress: '进行中' }
+const statusLabel = { completed: '完成', failed: '失败', pending: '等待中', in_progress: '进行中', timeout: '超时' }
+
+const logStatusMap = {
+  success: { label: '成功', type: 'success' },
+  failed: { label: '失败', type: 'danger' },
+  in_progress: { label: '调用中', type: 'warning' },
+  timeout: { label: '超时', type: 'danger' },
+  pending: { label: '等待中', type: 'info' },
+}
 
 function openLogDetail(row) {
   selectedLog.value = row
@@ -484,10 +499,20 @@ async function loadLogs() {
 async function handleRetry() {
   retrying.value = true
   try {
+    // 立即将状态更新为评审中
+    detail.value = { ...detail.value, status: 'in_progress', error_message: null }
+    // 同步更新版本列表中对应记录的状态
+    const latestRev = revisions.value.reduce((a, b) => a.revision > b.revision ? a : b, revisions.value[0])
+    if (latestRev) {
+      latestRev.status = 'in_progress'
+      latestRev.error_message = null
+    }
+
     await retryReview(route.params.id)
     ElMessage.success('已重新提交评审任务')
-    await loadDetail()
   } catch (error) {
+    // 失败时回滚状态
+    detail.value = { ...detail.value, status: 'failed', error_message: error.message || '重试失败' }
     ElMessage.error(error.message || '重试失败')
   } finally {
     retrying.value = false
@@ -801,5 +826,59 @@ onMounted(loadDetail)
 .revision-time {
   font-size: 11px;
   color: #c0c4cc;
+}
+
+// 评审历史版本过渡动画
+.revision-fade-enter-active {
+  transition: all 0.3s ease-out;
+}
+.revision-fade-leave-active {
+  transition: all 0.2s ease-in;
+}
+.revision-fade-enter-from {
+  opacity: 0;
+  transform: translateX(20px);
+}
+.revision-fade-leave-to {
+  opacity: 0;
+  transform: translateX(-20px);
+}
+.revision-fade-move {
+  transition: transform 0.3s ease;
+}
+
+// 评论列表过渡动画
+.comment-slide-enter-active {
+  transition: all 0.3s ease-out;
+}
+.comment-slide-leave-active {
+  transition: all 0.2s ease-in;
+}
+.comment-slide-enter-from {
+  opacity: 0;
+  transform: translateY(10px);
+}
+.comment-slide-leave-to {
+  opacity: 0;
+  transform: translateY(-10px);
+}
+
+// 调用日志状态动画
+.status-pulse {
+  animation: pulse-opacity 1.5s ease-in-out infinite;
+}
+
+:deep(.is-loading) {
+  animation: spin-anim 1s linear infinite;
+}
+
+@keyframes spin-anim {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes pulse-opacity {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
 }
 </style>
