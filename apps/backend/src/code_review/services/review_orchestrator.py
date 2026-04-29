@@ -4,6 +4,7 @@
 """
 
 import logging
+from dataclasses import replace
 from datetime import datetime, timezone
 from fnmatch import fnmatch
 from uuid import UUID
@@ -148,6 +149,17 @@ class ReviewOrchestrator:
                 logger.info(
                     "分支 %s 被过滤，跳过评审（project=%s）",
                     event.source_branch, project.name,
+                )
+                return None
+
+            # 检查 MR 标题或描述中是否包含跳过标记
+            skip_markers = ["[skip-review]", "[no-review]"]
+            mr_title = (event.mr_title or "").lower()
+            mr_description = str(event.raw_payload.get("description") or event.raw_payload.get("body") or "").lower()
+            if any(marker in mr_title or marker in mr_description for marker in skip_markers):
+                logger.info(
+                    "MR 包含跳过标记，跳过评审（project=%s, mr=%s, title=%s）",
+                    project.name, event.mr_iid, event.mr_title,
                 )
                 return None
 
@@ -463,6 +475,19 @@ class ReviewOrchestrator:
             )
             if not excluded:
                 filtered.append(change)
+
+        # 过滤包含行级跳过标记的 diff 行（# noqa: ai-review 或 // noqa: ai-review）
+        noqa_markers = ("# noqa: ai-review", "// noqa: ai-review")
+        cleaned = []
+        for change in filtered:
+            if change.diff and any(m in change.diff for m in noqa_markers):
+                clean_diff = "".join(
+                    line for line in change.diff.splitlines(keepends=True)
+                    if not any(m in line for m in noqa_markers)
+                )
+                change = replace(change, diff=clean_diff)
+            cleaned.append(change)
+        filtered = cleaned
 
         # 按 max_diff_size 裁剪（保留前面的文件，通常是按重要性排序）
         if max_diff_size > 0:

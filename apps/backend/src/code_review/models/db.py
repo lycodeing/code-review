@@ -54,6 +54,7 @@ class ReviewTask(Base):
         IN_PROGRESS = "in_progress"
         COMPLETED = "completed"
         FAILED = "failed"
+        SKIPPED = "skipped"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False)
@@ -484,6 +485,7 @@ class ReviewRule(Base):
     message = Column(Text, nullable=False, comment="命中时的提示信息")
     file_pattern = Column(String(512), nullable=False, default="**", comment="适用的文件 glob 模式")
     enabled = Column(Boolean, nullable=False, default=True, comment="是否启用")
+    is_builtin = Column(Boolean, nullable=False, default=False, comment="是否为内置模板规则")
     created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(tz=timezone.utc))
     updated_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(tz=timezone.utc), onupdate=lambda: datetime.now(tz=timezone.utc))
 
