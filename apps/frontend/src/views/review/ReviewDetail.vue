@@ -4,9 +4,6 @@
       <template #content>
         <span>评审详情</span>
         <StatusTag v-if="detail.status" :status="detail.status" style="margin-left: 8px" />
-        <el-tag v-if="revisions.length > 1" size="small" type="info" style="margin-left: 8px">
-          v{{ selectedRevision || detail.revision || 1 }}
-        </el-tag>
       </template>
       <template #extra>
         <div style="display: flex; gap: 8px; align-items: center">
@@ -32,7 +29,7 @@
     </el-page-header>
 
     <!-- 评审历史版本面板 -->
-    <el-card v-if="revisions.length > 1" shadow="never" class="revision-card">
+    <el-card v-if="revisions.length > 0" shadow="never" class="revision-card">
       <template #header>
         <div class="revision-header">
           <div class="revision-title">
@@ -50,13 +47,16 @@
           @click="switchRevision(rev.revision)"
         >
           <div class="revision-left">
-            <span class="revision-number">#{{ rev.revision }}</span>
+            <span class="revision-number">{{ String(rev.revision).padStart(2, '0') }}</span>
             <StatusTag :status="rev.status" type="severity" />
+          </div>
+          <div class="revision-center">
+            <span class="revision-date">{{ formatDate(rev.created_at) }}</span>
             <span class="revision-trigger">{{ rev.trigger_action }}</span>
           </div>
           <div class="revision-right">
             <span class="revision-model">{{ rev.model_name || '-' }}</span>
-            <span class="revision-time">{{ formatDateTime(rev.created_at) }}</span>
+            <span class="revision-time">{{ formatTime(rev.created_at) }}</span>
           </div>
         </div>
       </div>
@@ -110,7 +110,6 @@
         <!-- 评审评论 Tab -->
         <el-tab-pane :label="`评审评论 (${comments.length})`" name="comments">
           <el-card shadow="never" class="detail-card">
-            <!-- 评论筛选栏 -->
             <div v-if="comments.length" class="comment-filter-bar">
               <el-select v-model="commentSeverityFilter" placeholder="严重程度" clearable size="small" style="width: 140px">
                 <el-option label="严重" value="critical" />
@@ -125,7 +124,6 @@
               </el-radio-group>
             </div>
 
-            <!-- 列表模式 -->
             <div v-if="comments.length && commentViewMode === 'flat'">
               <div v-for="comment in filteredComments" :key="comment.id" class="comment-item">
                 <div class="comment-header">
@@ -153,7 +151,6 @@
               <el-empty v-if="!filteredComments.length" description="没有匹配的评论" :image-size="60" />
             </div>
 
-            <!-- 按文件分组模式 -->
             <div v-if="comments.length && commentViewMode === 'grouped'">
               <el-collapse v-model="expandedFiles">
                 <el-collapse-item
@@ -303,12 +300,10 @@ const notifying = ref(false)
 const revisions = ref([])
 const selectedRevision = ref(null)
 
-// 日志抽屉
 const logDrawerVisible = ref(false)
 const selectedLog = ref(null)
 const activeCollapseItems = ref(['req_headers', 'req_body', 'resp_body'])
 
-// 评论筛选
 const commentSeverityFilter = ref('')
 const commentFileSearch = ref('')
 const commentViewMode = ref('flat')
@@ -316,7 +311,6 @@ const expandedFiles = ref([])
 
 const severityOrder = { critical: 4, warning: 3, suggestion: 2, info: 1 }
 
-// 按 revision 倒序排列（最新在前）
 const sortedRevisions = computed(() => {
   return [...revisions.value].sort((a, b) => b.revision - a.revision)
 })
@@ -354,6 +348,20 @@ const groupedComments = computed(() => {
   return groups
 })
 
+function formatDate(dt) {
+  if (!dt) return '-'
+  const d = new Date(dt)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+function formatTime(dt) {
+  if (!dt) return '-'
+  const d = new Date(dt)
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
+const statusLabel = { completed: '完成', failed: '失败', pending: '等待中', in_progress: '进行中' }
+
 function openLogDetail(row) {
   selectedLog.value = row
   logDrawerVisible.value = true
@@ -380,10 +388,19 @@ async function loadDetail() {
   loading.value = true
   try {
     const id = route.params.id
+
+    // 并行加载详情和版本列表
     const [taskData, revisionsData] = await Promise.all([
-      getReview(id),
-      getReviewRevisions(id),
+      getReview(id).catch(() => null),
+      getReviewRevisions(id).catch(() => []),
     ])
+
+    if (!taskData) {
+      ElMessage.error('评审记录不存在')
+      loading.value = false
+      return
+    }
+
     detail.value = taskData
     revisions.value = Array.isArray(revisionsData) ? revisionsData : []
 
@@ -393,10 +410,10 @@ async function loadDetail() {
       selectedRevision.value = latest.revision
     }
 
-    // 加载当前版本的 comments 和 logs
+    // 加载当前版本的数据
     await loadRevisionData(selectedRevision.value)
-  } catch {
-    // 拦截器已处理
+  } catch (e) {
+    console.error('加载评审详情失败:', e)
   } finally {
     loading.value = false
   }
@@ -404,13 +421,22 @@ async function loadDetail() {
 
 async function loadRevisionData(revision) {
   const id = route.params.id
-  const params = revision ? { revision } : {}
-  const [commentsData, logsData] = await Promise.all([
-    getReviewComments(id, revision),
-    getReviewLogs(id, revision),
-  ])
-  comments.value = Array.isArray(commentsData) ? commentsData : []
-  logs.value = Array.isArray(logsData) ? logsData : []
+  try {
+    // 对于只有 1 个版本（revision=1，无子版本）的旧记录，不传 revision 参数
+    const hasMultipleRevisions = revisions.value.length > 1
+    const revParam = hasMultipleRevisions ? revision : undefined
+
+    const [commentsData, logsData] = await Promise.all([
+      getReviewComments(id, revParam).catch(() => []),
+      getReviewLogs(id, revParam).catch(() => []),
+    ])
+    comments.value = Array.isArray(commentsData) ? commentsData : []
+    logs.value = Array.isArray(logsData) ? logsData : []
+  } catch (e) {
+    console.error('加载版本数据失败:', e)
+    comments.value = []
+    logs.value = []
+  }
 }
 
 async function switchRevision(revision) {
@@ -419,7 +445,6 @@ async function switchRevision(revision) {
   selectedRevision.value = revision
   try {
     await loadRevisionData(revision)
-    // 更新详情中的版本相关信息
     const revTask = revisions.value.find(r => r.revision === revision)
     if (revTask) {
       detail.value = { ...detail.value, ...{
@@ -445,7 +470,9 @@ async function switchRevision(revision) {
 async function loadLogs() {
   logsLoading.value = true
   try {
-    const data = await getReviewLogs(route.params.id, selectedRevision.value)
+    const hasMultipleRevisions = revisions.value.length > 1
+    const revParam = hasMultipleRevisions ? selectedRevision.value : undefined
+    const data = await getReviewLogs(route.params.id, revParam)
     logs.value = Array.isArray(data) ? data : []
   } catch {
     // ignore
@@ -658,7 +685,7 @@ onMounted(loadDetail)
   &.warning { background: #fdf6ec; color: #e6a23c; }
 }
 
-// 评审历史面板样式
+// 评审历史面板
 .revision-card {
   margin-top: 16px;
   border-radius: $border-radius;
@@ -697,7 +724,6 @@ onMounted(loadDetail)
 
 .revision-item {
   display: flex;
-  justify-content: space-between;
   align-items: center;
   gap: 12px;
   padding: 10px 16px;
@@ -706,7 +732,7 @@ onMounted(loadDetail)
   cursor: pointer;
   transition: all 0.2s;
   white-space: nowrap;
-  min-width: 200px;
+  min-width: 180px;
   flex-shrink: 0;
 
   &:hover {
@@ -724,23 +750,31 @@ onMounted(loadDetail)
 .revision-left {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
 .revision-number {
-  font-size: 16px;
+  font-size: 18px;
   font-weight: 700;
-  color: #303133;
+  color: #606266;
   font-family: monospace;
-  min-width: 28px;
+  min-width: 22px;
+  text-align: center;
+
+  .active & {
+    color: #409eff;
+  }
+}
+
+.revision-center {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .revision-trigger {
   font-size: 12px;
   color: #909399;
-  max-width: 60px;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .revision-right {
@@ -748,6 +782,12 @@ onMounted(loadDetail)
   flex-direction: column;
   align-items: flex-end;
   gap: 2px;
+}
+
+.revision-date {
+  font-size: 12px;
+  color: #606266;
+  font-weight: 500;
 }
 
 .revision-model {
