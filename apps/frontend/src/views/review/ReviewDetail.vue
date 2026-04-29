@@ -48,7 +48,7 @@
         >
           <div class="revision-left">
             <span class="revision-number">{{ String(rev.revision).padStart(2, '0') }}</span>
-            <StatusTag :status="rev.status" type="severity" />
+            <StatusTag :status="rev.status" />
           </div>
           <div class="revision-center">
             <span class="revision-date">{{ formatDate(rev.created_at) }}</span>
