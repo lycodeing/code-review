@@ -111,6 +111,10 @@
                   <strong>建议修复：</strong>
                   <div class="md-content" v-html="renderMarkdown(comment.suggestion)" />
                 </div>
+                <div class="comment-feedback">
+                  <el-button text size="small" :type="comment.feedback === 'thumbs_up' ? 'primary' : ''" @click="handleFeedback(comment, 'thumbs_up')">👍 有用</el-button>
+                  <el-button text size="small" :type="comment.feedback === 'thumbs_down' ? 'danger' : ''" @click="handleFeedback(comment, 'thumbs_down')">👎 无用</el-button>
+                </div>
               </div>
               <el-empty v-if="!filteredComments.length" description="没有匹配的评论" :image-size="60" />
             </div>
@@ -145,6 +149,10 @@
                     <div v-if="comment.suggestion" class="comment-suggestion">
                       <strong>建议修复：</strong>
                       <div class="md-content" v-html="renderMarkdown(comment.suggestion)" />
+                    </div>
+                    <div class="comment-feedback">
+                      <el-button text size="small" :type="comment.feedback === 'thumbs_up' ? 'primary' : ''" @click="handleFeedback(comment, 'thumbs_up')">👍 有用</el-button>
+                      <el-button text size="small" :type="comment.feedback === 'thumbs_down' ? 'danger' : ''" @click="handleFeedback(comment, 'thumbs_down')">👎 无用</el-button>
                     </div>
                   </div>
                 </el-collapse-item>
@@ -242,7 +250,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { RefreshRight, Bell, Document } from '@element-plus/icons-vue'
-import { getReview, getReviewComments, retryReview, sendReviewNotification } from '@/api/reviews'
+import { getReview, getReviewComments, retryReview, sendReviewNotification, updateCommentFeedback } from '@/api/reviews'
 import { getReviewLogs } from '@/api/logs'
 import { formatDateTime } from '@/utils/format'
 import { renderMarkdown } from '@/utils/markdown'
@@ -308,6 +316,14 @@ const groupedComments = computed(() => {
 function openLogDetail(row) {
   selectedLog.value = row
   logDrawerVisible.value = true
+}
+
+async function handleFeedback(comment, value) {
+  const newFeedback = comment.feedback === value ? null : value
+  try {
+    await updateCommentFeedback(comment.id, newFeedback)
+    comment.feedback = newFeedback
+  } catch { /* 忽略 */ }
 }
 
 function formatJson(obj) {

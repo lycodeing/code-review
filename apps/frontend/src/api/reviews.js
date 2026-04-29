@@ -59,3 +59,8 @@ export function batchRetryReviews(taskIds) {
   return request.post('/reviews/batch-retry', { task_ids: taskIds })
 }
 
+/** 更新评审评论反馈（点赞/踩） */
+export function updateCommentFeedback(commentId, feedback) {
+  return request.patch(`/comments/${commentId}/feedback`, { feedback })
+}
+
