@@ -94,7 +94,7 @@
 
             <div v-if="detail.summary" class="summary-section">
               <h4>评审摘要</h4>
-              <div class="summary-content">{{ detail.summary }}</div>
+              <div class="summary-content md-content" v-html="renderMarkdown(detail.summary)" />
             </div>
 
             <el-alert

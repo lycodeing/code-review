@@ -35,8 +35,8 @@ services:
   app:
     <<: *backend
     container_name: code-review-app
-    expose:
-      - "8000"
+    ports:
+      - "8000:8000"
 
   worker:
     <<: *backend
