@@ -162,6 +162,9 @@ class ReviewComment(Base):
     suggestion = Column(Text, nullable=True)
     platform_comment_id = Column(String(255), nullable=True, comment="平台上已发布的评论 ID")
     feedback = Column(String(16), nullable=True, comment="用户反馈: thumbs_up / thumbs_down")
+    applied = Column(Boolean, nullable=False, default=False, comment="是否已应用建议")
+    applied_at = Column(DateTime(timezone=True), nullable=True, comment="应用时间")
+    applied_commit_sha = Column(String(64), nullable=True, comment="应用后的 commit SHA")
     created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: now_cst())
 
     task = relationship("ReviewTask", back_populates="comments")
