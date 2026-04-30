@@ -170,6 +170,36 @@ class ReviewComment(Base):
         return f"<ReviewComment {self.file_path}:{self.line_start} [{self.severity}]>"
 
 
+class ReviewLearning(Base):
+    """团队偏好学习记录表。"""
+    __tablename__ = "review_learnings"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
+    source_type = Column(String(32), nullable=False, default="feedback", comment="来源: feedback / manual")
+    source_comment_id = Column(UUID(as_uuid=True), ForeignKey("review_comments.id", ondelete="SET NULL"), nullable=True)
+    category = Column(String(64), nullable=False, default="style", comment="分类: style/pattern/naming/architecture/other")
+    rule_text = Column(Text, nullable=False, comment="偏好规则描述")
+    context = Column(Text, nullable=True, comment="原始评论上下文摘要")
+    feedback_sentiment = Column(String(16), nullable=True, comment="positive / negative")
+    confidence = Column(Integer, nullable=False, default=1, comment="置信度（相同反馈叠加）")
+    enabled = Column(Boolean, nullable=False, default=True, comment="是否启用")
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: now_cst())
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=lambda: now_cst(), onupdate=lambda: now_cst())
+
+    project = relationship("Project")
+    source_comment = relationship("ReviewComment")
+
+    __table_args__ = (
+        Index("idx_learnings_project", "project_id"),
+        Index("idx_learnings_category", "project_id", "category"),
+        Index("idx_learnings_enabled", "project_id", "enabled"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<ReviewLearning {self.category}: {self.rule_text[:50]}>"
+
+
 class PlatformConfig(Base):
     """代码平台配置表。"""
     __tablename__ = "platform_configs"

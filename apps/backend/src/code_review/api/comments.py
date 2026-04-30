@@ -1,5 +1,6 @@
 """评审评论反馈 API。"""
 
+import logging
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Request
@@ -8,6 +9,8 @@ from pydantic import BaseModel
 from code_review.models.db import ReviewComment
 
 router = APIRouter(prefix="/api/v1/comments", tags=["comments"])
+
+_logger = logging.getLogger(__name__)
 
 
 class FeedbackRequest(BaseModel):
@@ -33,4 +36,14 @@ async def update_comment_feedback(
         comment.feedback = body.feedback
         await session.commit()
         await session.refresh(comment)
+
+        # 触发偏好学习
+        if body.feedback in ("thumbs_up", "thumbs_down"):
+            try:
+                from code_review.services.learning_service import LearningService
+                svc = LearningService(session)
+                await svc.process_feedback(UUID(comment_id), body.feedback)
+            except Exception as e:
+                _logger.warning("偏好学习失败（不影响反馈保存）: %s", e)
+
         return {"id": str(comment.id), "feedback": comment.feedback}
