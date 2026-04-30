@@ -478,6 +478,25 @@ class ReviewOrchestrator:
                         publish_comments,
                     )
 
+                # 生成并发布 PR 摘要
+                pr_desc_enabled = await settings_svc.get_bool("pr_description_enabled", True)
+                if pr_desc_enabled and task.summary:
+                    pr_desc_mode = await settings_svc.get_string("pr_description_mode", "full")
+                    pr_description = self._build_pr_description(
+                        task, result.comments, filtered_changes, mode=pr_desc_mode,
+                    )
+                    try:
+                        await adapter.publish_comment(
+                            project.platform_project_id,
+                            task.mr_iid,
+                            PublishComment(body=pr_description, position=None),
+                        )
+                        task.pr_description = pr_description
+                        task.description_posted = True
+                        logger.info("PR 摘要已发布: task=%s", task_id)
+                    except Exception as e:
+                        logger.warning("PR 摘要发布失败（不影响评审结果）: %s", e)
+
                 # 保存评审意见到数据库
                 for comment in result.comments:
                     db_comment = ReviewCommentDB(
