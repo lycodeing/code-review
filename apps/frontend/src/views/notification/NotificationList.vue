@@ -88,10 +88,12 @@ import { getNotifications, deleteNotification, updateNotification } from '@/api/
 import NotificationForm from './NotificationForm.vue'
 import BindingConfig from './BindingConfig.vue'
 
-const channelNames = { dingtalk: '钉钉', feishu: '飞书' }
+const channelNames = { dingtalk: '钉钉', feishu: '飞书', wecom: '企业微信', slack: 'Slack' }
 const channelIcon = {
   dingtalk: { icon: 'ChatDotRound', color: '#0089FF' },
-  feishu: { icon: 'ChatLineRound', color: '#3370FF' }
+  feishu: { icon: 'ChatLineRound', color: '#3370FF' },
+  wecom: { icon: 'ChatDotRound', color: '#07C160' },
+  slack: { icon: 'ChatLineRound', color: '#4A154B' }
 }
 
 const loading = ref(false)

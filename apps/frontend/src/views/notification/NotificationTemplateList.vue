@@ -72,6 +72,8 @@
                     <el-select v-model="form.channel" :disabled="!isCreating" style="width: 100%">
                       <el-option label="钉钉" value="dingtalk" />
                       <el-option label="飞书" value="feishu" />
+                      <el-option label="企业微信" value="wecom" />
+                      <el-option label="Slack" value="slack" />
                     </el-select>
                   </el-form-item>
                 </el-col>
@@ -203,8 +205,8 @@ import {
   previewNotificationTemplate,
 } from '@/api/notificationTemplates'
 
-const channelNames = { dingtalk: '钉钉', feishu: '飞书' }
-const channelColor = { dingtalk: '#0089FF', feishu: '#3370FF' }
+const channelNames = { dingtalk: '钉钉', feishu: '飞书', wecom: '企业微信', slack: 'Slack' }
+const channelColor = { dingtalk: '#0089FF', feishu: '#3370FF', wecom: '#07C160', slack: '#4A154B' }
 
 const loading = ref(false)
 const saving = ref(false)
