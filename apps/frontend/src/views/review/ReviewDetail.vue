@@ -371,7 +371,7 @@ function formatTime(dt) {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }
 
-const statusLabel = { completed: '完成', failed: '失败', pending: '等待中', in_progress: '进行中', timeout: '超时' }
+const statusLabel = { completed: '完成', failed: '失败', pending: '等待中', in_progress: '进行中', timeout: '超时', cancelled: '已取消' }
 
 const logStatusMap = {
   success: { label: '成功', type: 'success' },

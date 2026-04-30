@@ -64,6 +64,7 @@ class ReviewTask(Base):
         FAILED = "failed"
         SKIPPED = "skipped"
         TIMEOUT = "timeout"
+        CANCELLED = "cancelled"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False)

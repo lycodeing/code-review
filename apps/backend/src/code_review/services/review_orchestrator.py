@@ -188,6 +188,26 @@ class ReviewOrchestrator:
                     .values(is_latest=False)
                 )
 
+                # 取消所有未完成的旧版本（pending / in_progress）
+                now_naive = now_cst().replace(tzinfo=None)
+                cancel_result = await session.execute(
+                    update(ReviewTask)
+                    .where(
+                        (ReviewTask.id == parent_task.id) | (ReviewTask.parent_id == parent_task.id),
+                        ReviewTask.status.in_([ReviewTask.Status.PENDING, ReviewTask.Status.IN_PROGRESS]),
+                    )
+                    .values(
+                        status=ReviewTask.Status.CANCELLED,
+                        error_message="新评审已触发，自动取消",
+                        completed_at=now_naive,
+                    )
+                )
+                if cancel_result.rowcount:
+                    logger.info(
+                        "取消 %d 个未完成的旧版本（project=%s, mr=%s）",
+                        cancel_result.rowcount, project.name, event.mr_iid,
+                    )
+
                 # 取主记录和所有子版本中最大的 revision，防止 revision 号重复
                 max_rev = (await session.execute(
                     select(func.coalesce(func.max(ReviewTask.revision), 0))

@@ -20,6 +20,7 @@
             <el-option label="已完成" value="completed" />
             <el-option label="失败" value="failed" />
             <el-option label="超时" value="timeout" />
+            <el-option label="已取消" value="cancelled" />
           </el-select>
         </el-form-item>
         <el-form-item label="MR 标题">

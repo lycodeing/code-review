@@ -523,8 +523,9 @@ async def retry_review(task_id: UUID, background_tasks: BackgroundTasks, request
             if latest:
                 retry_task = latest
 
-        if retry_task.status == ReviewTask.Status.IN_PROGRESS:
-            raise HTTPException(status_code=409, detail="评审任务正在执行中，无法重试")
+        if retry_task.status in (ReviewTask.Status.IN_PROGRESS, ReviewTask.Status.CANCELLED):
+            detail = "评审任务正在执行中，无法重试" if retry_task.status == ReviewTask.Status.IN_PROGRESS else "已取消的任务不支持重试"
+            raise HTTPException(status_code=409, detail=detail)
 
         retry_task.status = ReviewTask.Status.PENDING
         retry_task.error_message = None

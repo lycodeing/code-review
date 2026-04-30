@@ -46,7 +46,8 @@ export const reviewStatusMap = {
   completed: { label: '已完成', type: 'success' },
   failed: { label: '失败', type: 'danger' },
   timeout: { label: '超时', type: 'danger' },
-  skipped: { label: '已跳过', type: 'info' }
+  skipped: { label: '已跳过', type: 'info' },
+  cancelled: { label: '已取消', type: 'info' }
 }
 
 /** 严重程度映射 */
