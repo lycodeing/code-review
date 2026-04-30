@@ -342,6 +342,23 @@ class ReviewOrchestrator:
                 # 合并 diff
                 combined_diff = self._combine_diffs(filtered_changes)
 
+                # 上下文增强：加载 diff 中引用的相关文件
+                related_context: dict[str, str] = {}
+                ctx_enabled = await settings_svc.get_bool("context_enhancement_enabled", True)
+                if ctx_enabled:
+                    from code_review.services.context_extractor import ContextExtractor
+                    ctx_extractor = ContextExtractor()
+                    max_ctx_files = await settings_svc.get_int("context_max_files", 5)
+                    max_ctx_size = await settings_svc.get_int("context_max_file_size", 10000)
+                    related_context = await ctx_extractor.extract_context(
+                        adapter=adapter,
+                        project_id=project.platform_project_id,
+                        changes=filtered_changes,
+                        source_branch=task.source_branch or "main",
+                        max_files=max_ctx_files,
+                        max_file_size=max_ctx_size,
+                    )
+
                 # 执行规则引擎（确定性检查，在 LLM 评审前执行）
                 rules = await get_rules_for_project(session, task.project_id)
                 rule_comments = check_changes_against_rules(filtered_changes, rules)
@@ -427,6 +444,8 @@ class ReviewOrchestrator:
                             prompt_template=prompt,
                             task_id=task.id,
                             session_factory=self._session_factory,
+                            related_context=related_context if related_context else None,
+                            project_id=task.project_id,
                         )
                         task.model_name = result.model
                         logger.info("LLM 配置 %s 评审成功, model=%s", config_name, result.model)
