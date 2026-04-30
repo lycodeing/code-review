@@ -53,7 +53,7 @@
           </template>
         </el-table-column>
         <el-table-column prop="provider" label="提供商" width="170" show-overflow-tooltip />
-        <el-table-column prop="status" label="结果" width="90" align="center">
+        <el-table-column prop="status" label="结果" width="100" align="center">
           <template #default="{ row }">
             <el-tag
               :type="callLogStatusMap[row.status]?.type || 'info'"
