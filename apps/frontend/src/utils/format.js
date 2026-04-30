@@ -57,3 +57,12 @@ export const severityMap = {
   suggestion: { label: '建议', type: 'info' },
   info: { label: '提示', type: '' }
 }
+
+/** 调用日志状态映射 */
+export const callLogStatusMap = {
+  success: { label: '成功', type: 'success' },
+  failed: { label: '失败', type: 'danger' },
+  in_progress: { label: '请求中', type: 'warning' },
+  timeout: { label: '超时', type: 'danger' },
+  pending: { label: '等待中', type: 'info' },
+}

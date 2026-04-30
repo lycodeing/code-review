@@ -294,7 +294,7 @@ import { ElMessage } from 'element-plus'
 import { RefreshRight, Bell, Document, Clock, Loading } from '@element-plus/icons-vue'
 import { getReview, getReviewComments, retryReview, sendReviewNotification, updateCommentFeedback, getReviewRevisions } from '@/api/reviews'
 import { getReviewLogs } from '@/api/logs'
-import { formatDateTime } from '@/utils/format'
+import { formatDateTime, callLogStatusMap as logStatusMap } from '@/utils/format'
 import { renderMarkdown } from '@/utils/markdown'
 import StatusTag from '@/components/common/StatusTag.vue'
 import 'highlight.js/styles/github-dark.css'
@@ -372,14 +372,6 @@ function formatTime(dt) {
 }
 
 const statusLabel = { completed: '完成', failed: '失败', pending: '等待中', in_progress: '进行中', timeout: '超时', cancelled: '已取消' }
-
-const logStatusMap = {
-  success: { label: '成功', type: 'success' },
-  failed: { label: '失败', type: 'danger' },
-  in_progress: { label: '调用中', type: 'warning' },
-  timeout: { label: '超时', type: 'danger' },
-  pending: { label: '等待中', type: 'info' },
-}
 
 function openLogDetail(row) {
   selectedLog.value = row
