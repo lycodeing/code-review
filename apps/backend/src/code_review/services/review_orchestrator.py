@@ -387,6 +387,10 @@ class ReviewOrchestrator:
                 # 合并 diff
                 combined_diff = self._combine_diffs(filtered_changes)
 
+                # 系统配置服务（后续多处使用）
+                from code_review.services.system_settings_service import SystemSettingsService
+                settings_svc = SystemSettingsService(session)
+
                 # 上下文增强：加载 diff 中引用的相关文件
                 related_context: dict[str, str] = {}
                 ctx_enabled = await settings_svc.get_bool("context_enhancement_enabled", True)
@@ -446,8 +450,6 @@ class ReviewOrchestrator:
                 logger.debug("项目 %s 的 LLM 配置链: %s", task.project_id, [c.name for c in llm_config_chain])
 
                 # 从系统配置获取 LLM 超时时间
-                from code_review.services.system_settings_service import SystemSettingsService
-                settings_svc = SystemSettingsService(session)
                 llm_timeout = await settings_svc.get_int("llm_timeout_seconds", 120)
                 llm_timeout_value = None if llm_timeout == -1 else llm_timeout
 
