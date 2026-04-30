@@ -116,16 +116,61 @@ class ReviewOrchestrator:
     async def process_webhook_event(self, event: WebhookEvent) -> ReviewTask | None:
         """处理 Webhook 事件入口。
 
-        1. 查找项目配置
-        2. 查找或创建主记录（同一 PR 复用）
-        3. 创建子版本记录（后续 push）
-        4. 分发到 Celery 异步执行
+        1. 命令模式处理（action="command"）
+        2. 查找项目配置
+        3. 查找或创建主记录（同一 PR 复用）
+        4. 创建子版本记录（后续 push）
+        5. 分发到 Celery 异步执行
 
         注意：去重检查已在 webhook 端点层完成，此处不再重复检查。
         """
         self._ensure_engine()
         # 去重缓存设置（由 webhook 端点调用前设置，这里确保设置）
         event_dedup_cache.set(event.event_id, True, ttl=3600)
+
+        # 命令模式处理
+        if event.action == "command":
+            command = event.raw_payload.get("command")
+            from code_review.services.command_handler import CommandHandler
+            handler = CommandHandler(self)
+
+            async with self._session_factory() as session:
+                project = await self._find_project(session, event)
+                if not project:
+                    logger.warning("命令处理失败：未找到项目 %s/%s", event.platform.value, event.project_id)
+                    return None
+
+                # 获取平台配置
+                platform_config = await self._get_platform_config(project.platform)
+                if not platform_config:
+                    logger.warning("命令处理失败：未找到平台配置 %s", project.platform)
+                    return None
+
+                # 创建适配器
+                from code_review.adapters.factory import create_adapter
+                adapter = create_adapter(
+                    platform=project.platform,
+                    platform_config=platform_config,
+                    project_webhook_secret=project.webhook_secret or "",
+                )
+
+                # 将 db_project_id 添加到 raw_payload 供命令处理器使用
+                event.raw_payload["db_project_id"] = str(project.id)
+
+                match command:
+                    case "review":
+                        await handler.handle_review(event, self._session_factory)
+                    case "describe":
+                        await handler.handle_describe(event, self._session_factory, adapter)
+                    case "improve":
+                        await handler.handle_improve(event, self._session_factory)
+                    case "analyze":
+                        await handler.handle_analyze(event, self._session_factory, adapter)
+                    case _:
+                        logger.warning("未知命令: %s", command)
+
+            # 命令处理不返回 ReviewTask
+            return None
 
         async with self._session_factory() as session:
             # 查找匹配的项目
