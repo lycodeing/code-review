@@ -82,6 +82,8 @@ class ReviewTask(Base):
     critical_count = Column(Integer, nullable=True, default=0)
     warning_count = Column(Integer, nullable=True, default=0)
     summary = Column(Text, nullable=True)
+    pr_description = Column(Text, nullable=True, comment="生成的 PR 摘要内容")
+    description_posted = Column(Boolean, nullable=False, default=False, comment="是否已发布 PR 摘要到平台")
     error_message = Column(Text, nullable=True)
     celery_task_id = Column(String(255), nullable=True)
     started_at = Column(DateTime(timezone=True), nullable=True)
