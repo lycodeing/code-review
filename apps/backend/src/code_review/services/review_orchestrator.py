@@ -645,6 +645,40 @@ class ReviewOrchestrator:
         return "\n".join(parts)
 
     @staticmethod
+    def _build_pr_description(
+        task: ReviewTask,
+        comments: list,
+        changes: list,
+        mode: str = "full",
+    ) -> str:
+        """用评审结果组装 PR 摘要（不调用 LLM）。"""
+        from collections import Counter
+
+        body = "## AI 评审摘要\n\n"
+        body += f"**{task.summary}**\n\n"
+
+        if mode == "full":
+            severity_counts = Counter(
+                c.severity.value if hasattr(c.severity, 'value') else c.severity
+                for c in comments
+            )
+            body += "| 级别 | 数量 |\n|------|------|\n"
+            for sev in ("critical", "warning", "suggestion", "info"):
+                count = severity_counts.get(sev, 0)
+                if count > 0:
+                    body += f"| {sev} | {count} |\n"
+
+            file_list = sorted({
+                c.file_path for c in comments if hasattr(c, 'file_path') and c.file_path
+            })
+            if file_list:
+                body += "\n**涉及文件：**\n"
+                for f in file_list[:10]:
+                    body += f"- `{f}`\n"
+
+        return body
+
+    @staticmethod
     def _to_publish_comments(
         aggregated: list,
     ) -> list[PublishComment]:
