@@ -5,7 +5,7 @@
         <span class="table-title">系统配置</span>
       </div>
 
-      <div v-loading="loading" class="settings-wrapper">
+      <div v-loading="loading">
         <el-card shadow="hover" class="settings-card">
           <template #header>
             <div class="card-header">
@@ -24,67 +24,86 @@
           </el-tabs>
 
           <div v-if="currentSettings.length" class="settings-list">
-            <div
-              v-for="(item, index) in currentSettings"
-              :key="item.key"
-              class="setting-item"
-              :class="{ 'setting-item--last': index === currentSettings.length - 1 }"
-            >
-              <div class="setting-item__left">
-                <div class="setting-item__icon" :style="{ background: iconGradients[index % iconGradients.length] }">
-                  <el-icon :size="18" color="#fff">
-                    <component :is="categoryIcons[activeCategory] || Tools" />
-                  </el-icon>
+            <template v-for="(item, index) in currentSettings" :key="item.key">
+              <!-- agent_profiles：全宽卡片网格 -->
+              <div v-if="item.key === 'agent_profiles'" class="setting-item setting-item--full">
+                <div class="setting-item__left">
+                  <div class="setting-item__icon" :style="{ background: iconGradients[index % iconGradients.length] }">
+                    <el-icon :size="18" color="#fff">
+                      <component :is="categoryIcons[activeCategory] || Tools" />
+                    </el-icon>
+                  </div>
+                  <div class="setting-item__info">
+                    <div class="setting-item__label">{{ item.label }}</div>
+                    <div class="setting-item__desc">{{ item.description }}</div>
+                  </div>
                 </div>
-                <div class="setting-item__info">
-                  <div class="setting-item__label">{{ item.label }}</div>
-                  <div class="setting-item__desc">{{ item.description }}</div>
+                <div class="agent-section">
+                  <div class="agent-grid">
+                    <div v-for="(agent, idx) in agentProfiles" :key="idx" class="agent-card">
+                      <div class="agent-card__header">
+                        <el-tag :type="severityTagType(agent.severity)" effect="dark" round>
+                          {{ agent.name || '未命名' }}
+                        </el-tag>
+                        <el-tag :type="severityTagType(agent.severity)" size="small" round>
+                          {{ severityLabel(agent.severity) }}
+                        </el-tag>
+                        <div class="agent-card__actions">
+                          <el-button text size="small" @click="editAgent(idx)">编辑</el-button>
+                          <el-button type="danger" text size="small" @click="agentProfiles.splice(idx, 1)">删除</el-button>
+                        </div>
+                      </div>
+                      <div class="agent-card__focus">{{ agent.focus || '暂无关注点描述' }}</div>
+                    </div>
+                  </div>
+                  <el-button type="primary" plain @click="addAgent">
+                    <el-icon><Plus /></el-icon>
+                    添加 Agent
+                  </el-button>
                 </div>
               </div>
-              <div class="setting-item__right">
-                <!-- number 类型 -->
-                <template v-if="item.input_type === 'number'">
-                  <el-input-number
-                    v-model="form[item.key]"
-                    :min="-1"
-                    :step="item.unit === '秒' ? 30 : 1"
-                    controls-position="right"
-                    style="width: 160px"
-                  />
-                  <span v-if="item.unit" class="setting-unit">{{ item.unit }}</span>
-                  <el-tag
-                    v-if="form[item.key] === -1"
-                    type="warning"
-                    size="small"
-                    style="margin-left: 8px"
-                  >
-                    无限制
-                  </el-tag>
-                </template>
 
-                <!-- switch 类型 -->
-                <template v-else-if="item.input_type === 'switch'">
-                  <el-switch v-model="form[item.key]" />
-                </template>
-
-                <!-- select 类型 -->
-                <template v-else-if="item.input_type === 'select'">
-                  <el-select v-model="form[item.key]" style="width: 200px">
-                    <el-option
-                      v-for="opt in item.options"
-                      :key="opt.value"
-                      :label="opt.label"
-                      :value="opt.value"
+              <!-- 普通配置项 -->
+              <div v-else class="setting-item" :class="{ 'setting-item--last': index === currentSettings.length - 1 }">
+                <div class="setting-item__left">
+                  <div class="setting-item__icon" :style="{ background: iconGradients[index % iconGradients.length] }">
+                    <el-icon :size="18" color="#fff">
+                      <component :is="categoryIcons[activeCategory] || Tools" />
+                    </el-icon>
+                  </div>
+                  <div class="setting-item__info">
+                    <div class="setting-item__label">{{ item.label }}</div>
+                    <div class="setting-item__desc">{{ item.description }}</div>
+                  </div>
+                </div>
+                <div class="setting-item__right">
+                  <template v-if="item.input_type === 'number'">
+                    <el-input-number
+                      v-model="form[item.key]"
+                      :min="-1"
+                      :step="item.unit === '秒' ? 30 : 1"
+                      controls-position="right"
+                      style="width: 160px"
                     />
-                  </el-select>
-                </template>
-
-                <!-- text 类型（默认） -->
-                <template v-else>
-                  <el-input v-model="form[item.key]" style="width: 240px" />
-                </template>
+                    <span v-if="item.unit" class="setting-unit">{{ item.unit }}</span>
+                    <el-tag v-if="form[item.key] === -1" type="warning" size="small" style="margin-left: 8px">
+                      无限制
+                    </el-tag>
+                  </template>
+                  <template v-else-if="item.input_type === 'switch'">
+                    <el-switch v-model="form[item.key]" />
+                  </template>
+                  <template v-else-if="item.input_type === 'select'">
+                    <el-select v-model="form[item.key]" style="width: 200px">
+                      <el-option v-for="opt in item.options" :key="opt.value" :label="opt.label" :value="opt.value" />
+                    </el-select>
+                  </template>
+                  <template v-else>
+                    <el-input v-model="form[item.key]" style="width: 240px" />
+                  </template>
+                </div>
               </div>
-            </div>
+            </template>
           </div>
 
           <el-empty v-else-if="!loading" description="该分类暂无配置项" />
@@ -102,13 +121,36 @@
         </el-card>
       </div>
     </div>
+
+    <el-dialog v-model="agentEditVisible" :title="agentEditIdx === -1 ? '添加 Agent' : '编辑 Agent'" width="480px" destroy-on-close>
+      <el-form label-width="80px">
+        <el-form-item label="名称">
+          <el-input v-model="agentEditForm.name" placeholder="如 security" />
+        </el-form-item>
+        <el-form-item label="报告级别">
+          <el-select v-model="agentEditForm.severity" style="width: 200px">
+            <el-option label="严重 (critical)" value="critical" />
+            <el-option label="警告 (warning)" value="warning" />
+            <el-option label="建议 (suggestion)" value="suggestion" />
+            <el-option label="提示 (info)" value="info" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="关注点">
+          <el-input v-model="agentEditForm.focus" type="textarea" :rows="3" placeholder="描述该 Agent 的评审关注范围" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="agentEditVisible = false">取消</el-button>
+        <el-button type="primary" @click="confirmAgentEdit">确认</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Setting, Check, RefreshRight, Clock, Timer, Tools } from '@element-plus/icons-vue'
+import { Setting, Check, RefreshRight, Clock, Tools, Plus } from '@element-plus/icons-vue'
 import {
   getSystemSettingCategories,
   getSystemSettingsByCategory,
@@ -121,6 +163,50 @@ const categories = ref([])
 const activeCategory = ref('')
 const allSettings = reactive({})
 const form = reactive({})
+
+const agentProfiles = reactive([])
+const agentEditVisible = ref(false)
+const agentEditIdx = ref(-1)
+const agentEditForm = reactive({ name: '', focus: '', severity: 'warning' })
+
+const severityLabel = s => ({ critical: '严重', warning: '警告', suggestion: '建议', info: '提示' }[s] || s)
+const severityTagType = s => ({ critical: 'danger', warning: 'warning', suggestion: '', info: 'info' }[s] || 'info')
+
+function syncAgentProfilesFromForm() {
+  try {
+    const raw = form.agent_profiles
+    const parsed = typeof raw === 'string' ? JSON.parse(raw || '[]') : raw
+    agentProfiles.splice(0, agentProfiles.length, ...parsed)
+  } catch {
+    agentProfiles.splice(0, agentProfiles.length)
+  }
+}
+
+function addAgent() {
+  agentEditIdx.value = -1
+  Object.assign(agentEditForm, { name: '', focus: '', severity: 'warning' })
+  agentEditVisible.value = true
+}
+
+function editAgent(idx) {
+  agentEditIdx.value = idx
+  Object.assign(agentEditForm, { ...agentProfiles[idx] })
+  agentEditVisible.value = true
+}
+
+function confirmAgentEdit() {
+  if (!agentEditForm.name.trim()) {
+    ElMessage.warning('Agent 名称不能为空')
+    return
+  }
+  if (agentEditIdx.value === -1) {
+    agentProfiles.push({ ...agentEditForm })
+  } else {
+    Object.assign(agentProfiles[agentEditIdx.value], { ...agentEditForm })
+  }
+  form.agent_profiles = JSON.stringify(agentProfiles)
+  agentEditVisible.value = false
+}
 
 const categoryIcons = { timeout: Clock }
 const iconGradients = [
@@ -167,6 +253,9 @@ async function loadCategorySettings() {
     for (const item of data) {
       form[item.key] = parseFormValue(item)
     }
+    if (data.some(s => s.key === 'agent_profiles')) {
+      syncAgentProfilesFromForm()
+    }
   } catch {
     ElMessage.error('加载配置失败')
   } finally {
@@ -179,12 +268,15 @@ function onCategoryChange() {
 }
 
 async function handleSave() {
+  if (form.agent_profiles !== undefined) {
+    form.agent_profiles = JSON.stringify(agentProfiles)
+  }
+
   const items = currentSettings.value.map(item => ({
     key: item.key,
     value: serializeFormValue(item.key),
   }))
 
-  // 校验 number 类型
   for (const item of items) {
     const setting = currentSettings.value.find(s => s.key === item.key)
     if (setting?.input_type === 'number') {
@@ -199,7 +291,6 @@ async function handleSave() {
   saving.value = true
   try {
     const data = await updateSystemSettings({ settings: items })
-    // 只刷新当前分类
     allSettings[activeCategory.value] = data.filter(s => s.category === activeCategory.value)
     for (const item of allSettings[activeCategory.value]) {
       form[item.key] = parseFormValue(item)
@@ -221,10 +312,6 @@ onMounted(async () => {
 </script>
 
 <style lang="scss" scoped>
-.settings-wrapper {
-  max-width: 860px;
-}
-
 .settings-card {
   :deep(.el-card__header) {
     padding: 16px 24px;
@@ -267,14 +354,23 @@ onMounted(async () => {
   &--last {
     border-bottom: none;
   }
+
+  &--full {
+    flex-wrap: wrap;
+    border-bottom: none;
+    padding-bottom: 0;
+  }
 }
 
 .setting-item__left {
   display: flex;
   align-items: center;
   gap: 16px;
-  flex: 1;
-  min-width: 0;
+  flex-shrink: 0;
+}
+
+.setting-item--full .setting-item__left {
+  width: auto;
 }
 
 .setting-item__icon {
@@ -302,7 +398,6 @@ onMounted(async () => {
   font-size: 12px;
   color: #909399;
   line-height: 1.5;
-  max-width: 360px;
 }
 
 .setting-item__right {
@@ -323,5 +418,55 @@ onMounted(async () => {
   border-top: 1px solid #f0f0f0;
   display: flex;
   gap: 12px;
+}
+
+// Agent 卡片网格
+.agent-section {
+  width: 100%;
+  margin-top: 16px;
+  padding-bottom: 8px;
+}
+
+.agent-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.agent-card {
+  background: #f7f8fa;
+  border: 1px solid #ebeef5;
+  border-radius: 10px;
+  padding: 14px 16px;
+  transition: all 0.2s;
+
+  &:hover {
+    border-color: #d0d3d9;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
+  }
+}
+
+.agent-card__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.agent-card__actions {
+  margin-left: auto;
+  display: flex;
+  gap: 0;
+}
+
+.agent-card__focus {
+  font-size: 12px;
+  color: #909399;
+  line-height: 1.6;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 </style>

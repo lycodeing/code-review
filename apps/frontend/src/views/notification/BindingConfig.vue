@@ -38,7 +38,7 @@ import { getNotification, updateBinding } from '@/api/notification'
 import { getPlatform } from '@/api/platforms'
 import { platformNames } from '@/utils/format'
 
-const channelNames = { dingtalk: '钉钉', feishu: '飞书' }
+const channelNames = { dingtalk: '钉钉', feishu: '飞书', wecom: '企业微信', slack: 'Slack' }
 
 const props = defineProps({
   visible: Boolean,

@@ -58,4 +58,5 @@ class CategoryResponse(BaseModel):
 CATEGORY_LABELS: dict[str, str] = {
     "timeout": "超时配置",
     "general": "通用配置",
+    "review": "评审配置",
 }

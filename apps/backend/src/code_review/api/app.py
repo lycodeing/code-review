@@ -27,6 +27,8 @@ from code_review.api.review_rules import router as review_rules_router
 from code_review.api.comment_replies import router as comment_replies_router
 from code_review.api.comments import router as comments_router
 from code_review.api.system_settings import router as system_settings_router
+from code_review.api.learnings import router as learnings_router
+from code_review.api.suggestions import router as suggestions_router
 from code_review.infrastructure.celery_app import init_celery
 from code_review.infrastructure.notification_manager import NotificationManager
 from code_review.models.config import AppConfig
@@ -160,6 +162,8 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     app.include_router(comment_replies_router)
     app.include_router(comments_router)
     app.include_router(system_settings_router)
+    app.include_router(learnings_router)
+    app.include_router(suggestions_router)
 
     # 根路径重定向到 API 文档
     @app.get("/", include_in_schema=False)

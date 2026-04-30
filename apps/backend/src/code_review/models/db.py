@@ -82,6 +82,8 @@ class ReviewTask(Base):
     critical_count = Column(Integer, nullable=True, default=0)
     warning_count = Column(Integer, nullable=True, default=0)
     summary = Column(Text, nullable=True)
+    pr_description = Column(Text, nullable=True, comment="生成的 PR 摘要内容")
+    description_posted = Column(Boolean, nullable=False, default=False, comment="是否已发布 PR 摘要到平台")
     error_message = Column(Text, nullable=True)
     celery_task_id = Column(String(255), nullable=True)
     started_at = Column(DateTime(timezone=True), nullable=True)
@@ -95,6 +97,7 @@ class ReviewTask(Base):
     )
     revision = Column(Integer, nullable=False, default=1, comment="版本号（第几次 push）")
     is_latest = Column(Boolean, nullable=False, default=True, comment="是否为最新版本")
+    agent_mode = Column(String(16), nullable=False, default="single", comment="评审模式: single/multi")
 
     project = relationship("Project", back_populates="reviews")
     comments = relationship("ReviewComment", back_populates="task", cascade="all, delete-orphan")
@@ -160,12 +163,45 @@ class ReviewComment(Base):
     suggestion = Column(Text, nullable=True)
     platform_comment_id = Column(String(255), nullable=True, comment="平台上已发布的评论 ID")
     feedback = Column(String(16), nullable=True, comment="用户反馈: thumbs_up / thumbs_down")
+    applied = Column(Boolean, nullable=False, default=False, comment="是否已应用建议")
+    applied_at = Column(DateTime(timezone=True), nullable=True, comment="应用时间")
+    applied_commit_sha = Column(String(64), nullable=True, comment="应用后的 commit SHA")
     created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: now_cst())
 
     task = relationship("ReviewTask", back_populates="comments")
 
     def __repr__(self) -> str:
         return f"<ReviewComment {self.file_path}:{self.line_start} [{self.severity}]>"
+
+
+class ReviewLearning(Base):
+    """团队偏好学习记录表。"""
+    __tablename__ = "review_learnings"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
+    source_type = Column(String(32), nullable=False, default="feedback", comment="来源: feedback / manual")
+    source_comment_id = Column(UUID(as_uuid=True), ForeignKey("review_comments.id", ondelete="SET NULL"), nullable=True)
+    category = Column(String(64), nullable=False, default="style", comment="分类: style/pattern/naming/architecture/other")
+    rule_text = Column(Text, nullable=False, comment="偏好规则描述")
+    context = Column(Text, nullable=True, comment="原始评论上下文摘要")
+    feedback_sentiment = Column(String(16), nullable=True, comment="positive / negative")
+    confidence = Column(Integer, nullable=False, default=1, comment="置信度（相同反馈叠加）")
+    enabled = Column(Boolean, nullable=False, default=True, comment="是否启用")
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: now_cst())
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=lambda: now_cst(), onupdate=lambda: now_cst())
+
+    project = relationship("Project")
+    source_comment = relationship("ReviewComment")
+
+    __table_args__ = (
+        Index("idx_learnings_project", "project_id"),
+        Index("idx_learnings_category", "project_id", "category"),
+        Index("idx_learnings_enabled", "project_id", "enabled"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<ReviewLearning {self.category}: {self.rule_text[:50]}>"
 
 
 class PlatformConfig(Base):

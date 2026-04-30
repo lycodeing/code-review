@@ -61,7 +61,7 @@ const allTemplates = ref([])
 // key: notification_config.id → template_id | null
 const bindingMap = reactive({})
 
-const channelNames = { dingtalk: '🔔 钉钉', feishu: '🔵 飞书' }
+const channelNames = { dingtalk: '🔔 钉钉', feishu: '🔵 飞书', wecom: '💚 企业微信', slack: '🟣 Slack' }
 function channelLabel(ch) {
   return channelNames[ch] || ch
 }

@@ -1,0 +1,4 @@
+-- 添加代码建议应用状态字段
+ALTER TABLE review_comments ADD COLUMN IF NOT EXISTS applied BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE review_comments ADD COLUMN IF NOT EXISTS applied_at TIMESTAMPTZ;
+ALTER TABLE review_comments ADD COLUMN IF NOT EXISTS applied_commit_sha VARCHAR(64);

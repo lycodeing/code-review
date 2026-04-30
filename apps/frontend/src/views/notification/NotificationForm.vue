@@ -16,6 +16,8 @@
         >
           <el-option label="钉钉" value="dingtalk" />
           <el-option label="飞书" value="feishu" />
+          <el-option label="企业微信" value="wecom" />
+          <el-option label="Slack" value="slack" />
           <el-option label="邮件" value="email" />
         </el-select>
       </el-form-item>

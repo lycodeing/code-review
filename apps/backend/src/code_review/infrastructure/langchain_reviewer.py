@@ -99,6 +99,8 @@ class LangChainReviewer(LLMReviewer):
         prompt_template: str,
         task_id: UUID | None = None,
         session_factory=None,
+        related_context: dict[str, str] | None = None,
+        project_id: UUID | None = None,
     ) -> ReviewResult:
         start_time = time.time()
         total_tokens = 0
@@ -108,16 +110,50 @@ class LangChainReviewer(LLMReviewer):
         # 构建文件上下文
         files_context = self._build_files_context(files)
 
+        # 检测模板语言
+        is_chinese = any('\u4e00' <= c <= '\u9fff' for c in prompt_template[:200])
+
         # 组装最终 prompt
         full_prompt = prompt_template.replace("{{diff}}", diff)
         full_prompt = full_prompt.replace("{{files_context}}", files_context)
+
+        # 注入相关文件上下文
+        if related_context:
+            ctx_parts = [
+                f"### `{path}`\n```\n{content}\n```"
+                for path, content in related_context.items()
+            ]
+            full_prompt = full_prompt.replace(
+                "{{related_context}}", "\n\n".join(ctx_parts)
+            )
+        elif "{{related_context}}" in full_prompt:
+            full_prompt = full_prompt.replace("{{related_context}}", "（无额外上下文）")
+
+        # 注入团队偏好
+        learning_context = ""
+        if project_id and session_factory:
+            try:
+                async with session_factory() as l_session:
+                    from code_review.services.learning_service import LearningService
+                    l_svc = LearningService(l_session)
+                    learning_context = await l_svc.get_learnings_for_prompt(project_id)
+            except Exception as e:
+                logger.warning("加载偏好规则失败: %s", e)
+        if learning_context:
+            full_prompt += f"\n\n## 团队偏好规则（请参考以下风格偏好）\n{learning_context}"
+
+        system_msg = (
+            "你是一位专业的代码评审专家。分析提供的 diff 并返回结构化的评审意见。始终以合法 JSON 格式返回结果。"
+            if is_chinese
+            else "You are an expert code reviewer. Analyze the provided diff and return structured review comments. Always respond in valid JSON format."
+        )
 
         log_request_body = {
             "model": self._config.model,
             "max_tokens": self._config.max_tokens,
             "base_url": self._config.api_base or None,
             "messages": [
-                {"role": "system", "content": "You are an expert code reviewer. Analyze the provided diff and return structured review comments. Always respond in valid JSON format."},
+                {"role": "system", "content": system_msg},
                 {"role": "user", "content": full_prompt[:_MAX_USER_CONTENT]},
             ],
         }
@@ -135,11 +171,7 @@ class LangChainReviewer(LLMReviewer):
         try:
             # 构建消息
             messages = [
-                SystemMessage(content=(
-                    "You are an expert code reviewer. "
-                    "Analyze the provided diff and return structured review comments. "
-                    "Always respond in valid JSON format."
-                )),
+                SystemMessage(content=system_msg),
                 HumanMessage(content=full_prompt),
             ]
 

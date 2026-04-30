@@ -159,5 +159,17 @@ class PlatformAdapter(ABC):
         """解析 Webhook 负载为统一事件模型。不相关事件返回 None。"""
 
     @abstractmethod
+    async def create_commit(
+        self,
+        project_id: str,
+        mr_iid: str,
+        file_path: str,
+        content: str,
+        commit_message: str,
+        branch: str,
+    ) -> str:
+        """创建单文件 commit 并返回 commit SHA。"""
+
+    @abstractmethod
     async def health_check(self) -> bool:
         """检查平台连接和认证是否正常。"""

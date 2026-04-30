@@ -220,6 +220,39 @@ class GitLabAdapter(BasePlatformAdapter):
             raw_payload=payload,
         )
 
+    async def create_commit(
+        self,
+        project_id: str,
+        mr_iid: str,
+        file_path: str,
+        content: str,
+        commit_message: str,
+        branch: str,
+    ) -> str:
+        """创建单文件 commit 并返回 commit SHA。"""
+        import base64
+        import urllib.parse
+
+        encoded_pid = _url_encode(project_id)
+        encoded_path = urllib.parse.quote(file_path, safe="")
+        content_b64 = base64.b64encode(content.encode("utf-8")).decode("utf-8")
+
+        payload = {
+            "branch": branch,
+            "commit_message": commit_message,
+            "content": content_b64,
+        }
+
+        data = await self._request(
+            "PUT",
+            f"/projects/{encoded_pid}/repository/files/{encoded_path}",
+            json=payload,
+        )
+        commit_sha = data.get("commit_id")
+        if not commit_sha:
+            raise Exception(f"GitLab commit 创建失败: {data}")
+        return commit_sha
+
     async def health_check(self) -> bool:
         try:
             await self._request("GET", "/user")
