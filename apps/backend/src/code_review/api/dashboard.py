@@ -61,7 +61,7 @@ async def dashboard_stats(
         sev_stmt = (
             select(ReviewComment.severity, func.count().label("count"))
             .join(ReviewTask, ReviewComment.task_id == ReviewTask.id)
-            .where(period_filter, ReviewTask.parent_id.is_(None))
+            .where(period_filter)
             .group_by(ReviewComment.severity)
         )
         sev_rows = (await session.execute(sev_stmt)).all()

@@ -597,3 +597,25 @@ class CommentReply(Base):
 
     def __repr__(self) -> str:
         return f"<CommentReply {self.id} [{self.source}]>"
+
+
+class SystemSetting(Base):
+    """系统配置表（通用 key-value 模式）。"""
+    __tablename__ = "system_settings"
+
+    key = Column(String(128), primary_key=True, comment="配置键")
+    value = Column(Text, nullable=False, comment="配置值")
+    value_type = Column(String(16), nullable=False, default="string", comment="值类型: int/string/bool")
+    input_type = Column(String(16), nullable=False, default="text", comment="输入控件: number/switch/text/select")
+    category = Column(String(64), nullable=False, default="general", comment="配置分类")
+    label = Column(String(255), nullable=False, default="", comment="人类可读名称")
+    description = Column(Text, nullable=False, default="", comment="配置说明")
+    unit = Column(String(16), nullable=False, default="", comment="输入后缀，如 秒/MB")
+    default_value = Column(Text, nullable=False, default="", comment="初始默认值")
+    options = Column(JSONB, nullable=True, comment="select 类型的选项列表")
+    sort_order = Column(Integer, nullable=False, default=0, comment="排序")
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: now_cst())
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=lambda: now_cst(), onupdate=lambda: now_cst())
+
+    def __repr__(self) -> str:
+        return f"<SystemSetting {self.key}={self.value}>"

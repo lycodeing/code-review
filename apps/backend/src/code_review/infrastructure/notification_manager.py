@@ -45,27 +45,6 @@ async def _save_notification_log(session_factory, task_id: UUID, result) -> None
         logger.warning("记录通知调用日志失败: %s", e)
 
 
-async def create_notification_log(session_factory, task_id: UUID, *, provider: str, url: str) -> UUID:
-    """通知发送前创建一条 in_progress 日志记录。"""
-    try:
-        from code_review.models.db import ApiCallLog
-        async with session_factory() as session:
-            log = ApiCallLog(
-                task_id=task_id,
-                call_type=ApiCallLog.CallType.NOTIFICATION,
-                provider=provider,
-                method="POST",
-                url=url,
-                status=ApiCallLog.CallStatus.IN_PROGRESS,
-            )
-            session.add(log)
-            await session.commit()
-            return log.id
-    except Exception as e:
-        logger.warning("创建通知日志失败: %s", e)
-        return UUID(int=0)
-
-
 class NotificationManager:
     """统一管理所有通知渠道，支持按配置启用/禁用。"""
 
@@ -76,8 +55,14 @@ class NotificationManager:
     async def init_channels_from_db(self, session_factory, secret_key: str, platform: str = "") -> None:
         """从数据库加载通知渠道配置。"""
         from code_review.services.notification_config_service import NotificationConfigService
+        from code_review.services.system_settings_service import SystemSettingsService
 
         self._channels.clear()
+
+        # 获取通知超时配置
+        async with session_factory() as session:
+            settings_svc = SystemSettingsService(session)
+            notification_timeout = await settings_svc.get_int("notification_timeout_seconds", 30)
 
         async with session_factory() as session:
             svc = NotificationConfigService(session, secret_key)
@@ -93,7 +78,7 @@ class NotificationManager:
                 if cfg.channel == "email" and cfg.extra_config:
                     channel = self._create_email_channel(cfg)
                 else:
-                    channel = channel_cls(cfg)
+                    channel = channel_cls(cfg, timeout=notification_timeout)
                 if channel and channel.enabled:
                     self._channels.append((channel, cfg.id))
                     logger.info("Notification channel enabled from DB: %s", channel.name)

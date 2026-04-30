@@ -123,8 +123,7 @@ class LangChainReviewer(LLMReviewer):
         }
         log_url = f"{self._config.api_base}/chat/completions" if self._config.api_base else "langchain"
 
-        # 请求发起前创建 in_progress 日志
-        log_id = UUID(int=0)
+        log_id: UUID | None = None
         if task_id is not None and session_factory is not None:
             log_id = await create_llm_log(
                 session_factory, task_id,
@@ -179,7 +178,7 @@ class LangChainReviewer(LLMReviewer):
             for warning in parsed_result.warnings:
                 logger.warning(f"解析警告: {warning}")
 
-            if log_id != UUID(int=0):
+            if log_id is not None:
                 await update_llm_log(
                     session_factory, log_id,
                     response_status=200,
@@ -197,7 +196,7 @@ class LangChainReviewer(LLMReviewer):
         except ValueError as e:
             duration_ms = int((time.perf_counter() - t0) * 1000)
             logger.error("多格式解析器失败: %s", e)
-            if log_id != UUID(int=0):
+            if log_id is not None:
                 await update_llm_log(
                     session_factory, log_id,
                     response_status=200, response_body={},
@@ -207,7 +206,7 @@ class LangChainReviewer(LLMReviewer):
         except Exception as e:
             duration_ms = int((time.perf_counter() - t0) * 1000)
             logger.error(f"LangChain LLM 调用失败: {e}", exc_info=True)
-            if log_id != UUID(int=0):
+            if log_id is not None:
                 await update_llm_log(
                     session_factory, log_id,
                     response_status=0, response_body={},

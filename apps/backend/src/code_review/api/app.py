@@ -26,6 +26,7 @@ from code_review.api.logs import router as logs_router
 from code_review.api.review_rules import router as review_rules_router
 from code_review.api.comment_replies import router as comment_replies_router
 from code_review.api.comments import router as comments_router
+from code_review.api.system_settings import router as system_settings_router
 from code_review.infrastructure.celery_app import init_celery
 from code_review.infrastructure.notification_manager import NotificationManager
 from code_review.models.config import AppConfig
@@ -122,7 +123,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         # 启动超时检查后台任务
         stop_event = asyncio.Event()
         asyncio.create_task(
-            _timeout_check_loop(session_factory, config.review.review_timeout_seconds, stop_event)
+            _timeout_check_loop(session_factory, stop_event)
         )
 
         yield
@@ -158,6 +159,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     app.include_router(review_rules_router)
     app.include_router(comment_replies_router)
     app.include_router(comments_router)
+    app.include_router(system_settings_router)
 
     # 根路径重定向到 API 文档
     @app.get("/", include_in_schema=False)
@@ -223,38 +225,86 @@ async def _seed_config_tables(session) -> None:
                 ))
     await session.commit()
 
+    # 种子系统配置（超时等通用 key-value）
+    from code_review.models.db import SystemSetting
+
+    default_settings = [
+        {
+            "key": "review_timeout_seconds", "value": "1800",
+            "value_type": "int", "input_type": "number",
+            "category": "timeout",
+            "label": "评审超时时间",
+            "description": "评审任务的超时时间（秒），超时后自动标记为 TIMEOUT 状态。-1 表示无限制",
+            "unit": "秒", "default_value": "1800",
+            "sort_order": 1,
+        },
+        {
+            "key": "llm_timeout_seconds", "value": "120",
+            "value_type": "int", "input_type": "number",
+            "category": "timeout",
+            "label": "AI 请求超时时间",
+            "description": "调用大模型的请求超时时间（秒）。-1 表示无限制",
+            "unit": "秒", "default_value": "120",
+            "sort_order": 2,
+        },
+        {
+            "key": "notification_timeout_seconds", "value": "30",
+            "value_type": "int", "input_type": "number",
+            "category": "timeout",
+            "label": "通知发送超时时间",
+            "description": "发送通知（飞书/钉钉）的 HTTP 请求超时时间（秒）。-1 表示无限制",
+            "unit": "秒", "default_value": "30",
+            "sort_order": 3,
+        },
+    ]
+    for s in default_settings:
+        existing = await session.execute(
+            select(SystemSetting).where(SystemSetting.key == s["key"])
+        )
+        if existing.scalar_one_or_none() is None:
+            session.add(SystemSetting(**s))
+    await session.commit()
+
 
 # WSGI/ASGI 入口
 app = create_app()
 
 
-async def _timeout_check_loop(session_factory, timeout_seconds: int, stop_event: asyncio.Event) -> None:
+async def _timeout_check_loop(session_factory, stop_event: asyncio.Event) -> None:
     """后台定时检查评审任务超时。"""
     from datetime import datetime, timedelta
     from sqlalchemy import select
+    from code_review.services.system_settings_service import SystemSettingsService
 
-    logger.info("评审超时检查任务已启动，超时阈值: %d 秒", timeout_seconds)
+    logger.info("评审超时检查任务已启动")
     while not stop_event.is_set():
         try:
             async with session_factory() as session:
-                # 数据库列为 timestamp without time zone，使用 naive datetime 比较
-                now = now_cst().replace(tzinfo=None)
-                cutoff = now - timedelta(seconds=timeout_seconds)
-                stmt = select(ReviewTask).where(
-                    ReviewTask.status == ReviewTask.Status.IN_PROGRESS,
-                    ReviewTask.started_at.isnot(None),
-                    ReviewTask.started_at < cutoff,
-                )
-                result = await session.execute(stmt)
-                timed_out = result.scalars().all()
-                for task in timed_out:
-                    task.status = ReviewTask.Status.TIMEOUT
-                    task.error_message = f"评审超时（超过 {timeout_seconds} 秒）"
-                    task.completed_at = now
-                    logger.warning("评审任务超时: %s, started_at=%s", task.id, task.started_at)
-                if timed_out:
-                    await session.commit()
-                    logger.info("标记 %d 个评审任务为超时", len(timed_out))
+                svc = SystemSettingsService(session)
+                timeout_seconds = await svc.get_int("review_timeout_seconds", 1800)
+
+                # -1 表示无限制，跳过检查
+                if timeout_seconds == -1:
+                    pass
+                else:
+                    # 数据库列为 timestamp without time zone，使用 naive datetime 比较
+                    now = now_cst().replace(tzinfo=None)
+                    cutoff = now - timedelta(seconds=timeout_seconds)
+                    stmt = select(ReviewTask).where(
+                        ReviewTask.status == ReviewTask.Status.IN_PROGRESS,
+                        ReviewTask.started_at.isnot(None),
+                        ReviewTask.started_at < cutoff,
+                    )
+                    result = await session.execute(stmt)
+                    timed_out = result.scalars().all()
+                    for task in timed_out:
+                        task.status = ReviewTask.Status.TIMEOUT
+                        task.error_message = f"评审超时（超过 {timeout_seconds} 秒）"
+                        task.completed_at = now
+                        logger.warning("评审任务超时: %s, started_at=%s", task.id, task.started_at)
+                    if timed_out:
+                        await session.commit()
+                        logger.info("标记 %d 个评审任务为超时", len(timed_out))
         except Exception as e:
             logger.error("超时检查失败: %s", e)
 

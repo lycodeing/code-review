@@ -285,6 +285,11 @@ class ReviewOrchestrator:
                 return
 
             try:
+                # 执行前检查任务是否已被取消（新评审到来时会取消旧版本）
+                if task.status == ReviewTask.Status.CANCELLED:
+                    logger.info("任务已被取消，跳过执行: %s", task_id)
+                    return
+
                 # 更新状态为评审中
                 task.status = ReviewTask.Status.IN_PROGRESS
                 task.started_at = now_cst()
@@ -378,6 +383,12 @@ class ReviewOrchestrator:
 
                 logger.debug("项目 %s 的 LLM 配置链: %s", task.project_id, [c.name for c in llm_config_chain])
 
+                # 从系统配置获取 LLM 超时时间
+                from code_review.services.system_settings_service import SystemSettingsService
+                settings_svc = SystemSettingsService(session)
+                llm_timeout = await settings_svc.get_int("llm_timeout_seconds", 120)
+                llm_timeout_value = None if llm_timeout == -1 else llm_timeout
+
                 # 构造 LLM 配置候选列表
                 llm_candidates: list[tuple[str, LLMConfig]] = []
                 for llm_config in llm_config_chain:
@@ -388,7 +399,7 @@ class ReviewOrchestrator:
                         api_base=llm_config.api_base or "",
                         temperature=llm_config.extra_params.get("temperature", 0.3) if llm_config.extra_params else 0.3,
                         max_tokens=llm_config.extra_params.get("max_tokens", 4096) if llm_config.extra_params else 4096,
-                        timeout=llm_config.extra_params.get("timeout", 120) if llm_config.extra_params else 120,
+                        timeout=llm_config.extra_params.get("timeout", llm_timeout_value) if llm_config.extra_params else llm_timeout_value,
                         response_format=llm_config.response_format or "auto",
                         extra_params=llm_config.extra_params,
                     )
@@ -396,7 +407,9 @@ class ReviewOrchestrator:
 
                 # 无数据库配置时，降级到环境变量
                 if not llm_candidates:
-                    llm_candidates.append(("env_default", self._config.llm))
+                    env_llm = self._config.llm
+                    env_llm.timeout = llm_timeout_value if llm_timeout_value is not None else env_llm.timeout
+                    llm_candidates.append(("env_default", env_llm))
                     logger.info("无数据库 LLM 配置，降级到环境变量, model=%r", self._config.llm.model)
 
                 # 按优先级尝试 LLM 调用，失败则自动降级到下一个
@@ -433,6 +446,12 @@ class ReviewOrchestrator:
                     raise RuntimeError(
                         f"所有 LLM 配置均失败（已尝试: {', '.join(tried_configs)}）: {last_error}"
                     )
+
+                # LLM 调用完成后再次检查是否被取消（LLM 调用耗时最长，期间可能有新评审到来）
+                await session.refresh(task)
+                if task.status == ReviewTask.Status.CANCELLED:
+                    logger.info("任务在 LLM 调用期间被取消，跳过后续处理: %s", task_id)
+                    return
 
                 # 合并规则引擎评论和 LLM 评论
                 if rule_comments:

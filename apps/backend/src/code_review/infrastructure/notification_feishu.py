@@ -16,10 +16,11 @@ logger = logging.getLogger(__name__)
 class FeishuChannel(NotificationChannel):
     """飞书自定义机器人 Webhook 通知。"""
 
-    def __init__(self, config):
+    def __init__(self, config, timeout: int = 30):
         self._enabled = getattr(config, "enabled", False)
         self._webhook_url = getattr(config, "webhook_url", "")
         self._secret = getattr(config, "secret", "")
+        self._timeout = None if timeout == -1 else timeout
 
     @property
     def name(self) -> str:
@@ -45,7 +46,7 @@ class FeishuChannel(NotificationChannel):
         body: dict = {}
         try:
             body = self._build_message(payload)
-            async with httpx.AsyncClient(timeout=30) as client:
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
                 resp = await client.post(self._webhook_url, json=body, headers=req_headers)
 
             duration_ms = int((time.perf_counter() - t0) * 1000)

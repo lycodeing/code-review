@@ -37,6 +37,7 @@ psql -U postgres -d code_review -f apps/backend/migrations/add_dashboard_index.s
 psql -U postgres -d code_review -f apps/backend/migrations/add_notification_extra_config.sql
 psql -U postgres -d code_review -f apps/backend/migrations/add_review_rules.sql
 psql -U postgres -d code_review -f apps/backend/migrations/add_comment_replies.sql
+psql -U postgres -d code_review -f apps/backend/migrations/add_system_settings.sql
 
 # 运行全部测试
 cd apps/backend && pytest
@@ -128,6 +129,7 @@ core/（抽象接口 ABC + 错误定义）
 - `llm_config.py` — LLM 配置 CRUD + 项目绑定
 - `prompt_template.py` — Prompt 模板 CRUD + 项目绑定
 - `logs.py` — API 调用日志查看
+- `system_settings.py` — 系统配置（通用 key-value 模式，支持 number/switch/text/select 输入类型）读写 + 分类列表
 
 ### response_parser 包
 
@@ -152,13 +154,15 @@ core/（抽象接口 ABC + 错误定义）
 - `RetryableError`（`core/errors.py`）标识可重试的瞬态故障（LLM 超时、网络错误、限流）
 - 前端 API 模块命名：复数+驼峰（`projects.js`、`reviews.js`、`platforms.js`、`llmConfigs.js`、`templates.js`）
 - 结构化日志使用 structlog（JSON 格式输出）
+- **新增前端页面必须同步三处**：① `apps/frontend/src/router/routes.js` 添加路由 ② `apps/frontend/src/components/layout/Sidebar.vue` 添加菜单项并导入图标 ③ 菜单项名称不能与父级子菜单名称重复。完成后必须 `npm run build` 验证，Docker 部署需 `docker compose up -d --build frontend` 重建容器
 
 ### 数据库模型
 
-ORM 模型定义在 `models/db.py`，当前共 15 张表：
+ORM 模型定义在 `models/db.py`，当前共 16 张表：
 - 核心业务：`projects`、`review_tasks`、`review_comments`、`comment_replies`
 - 模板管理：`prompt_templates`、`notification_templates`
 - 配置管理：`platform_configs`、`notification_configs`、`llm_configs`、`review_rules`
+- 系统配置：`system_settings`（key-value 模式，存储超时等系统级动态配置）
 - 关联绑定：`platform_notification_bindings`、`project_llm_bindings`、`project_prompt_bindings`、`project_rule_bindings`、`project_notification_template_bindings`
 - 日志：`api_call_logs`（记录 LLM 调用和通知发送的请求/响应详情）
 
@@ -173,6 +177,7 @@ ORM 模型定义在 `models/db.py`，当前共 15 张表：
 4. `add_notification_extra_config.sql`
 5. `add_review_rules.sql`
 6. `add_comment_replies.sql`
+7. `add_system_settings.sql`
 
 Docker 部署时 `init.sql` 挂载到 `docker-entrypoint-initdb.d/`，仅在空数据目录时执行，已有数据不受影响。应用启动时 `Base.metadata.create_all` 会自动创建缺失的表结构。
 

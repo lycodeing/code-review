@@ -426,13 +426,13 @@ async def create_manual_review(
         if not project.enabled:
             raise HTTPException(status_code=400, detail="项目未启用")
 
-        # 检查是否已存在该 PR 的主记录（适配 revision 系统）
+        # 检查是否已存在该 PR 的主记录（FOR UPDATE 防止并发创建重复主记录）
         existing_parent = await session.execute(
             select(ReviewTask).where(
                 ReviewTask.project_id == body.project_id,
                 ReviewTask.mr_iid == body.mr_iid,
                 ReviewTask.parent_id.is_(None),
-            )
+            ).with_for_update()
         )
         parent_task = existing_parent.scalar_one_or_none()
 
@@ -454,10 +454,12 @@ async def create_manual_review(
             raise HTTPException(status_code=400, detail=f"获取 MR 信息失败: {str(e)}")
 
         if parent_task:
-            # 已有主记录，创建子版本
+            # 已有主记录，创建子版本（含主记录自身的 revision 防止重复）
             max_rev = (await session.execute(
                 select(func.coalesce(func.max(ReviewTask.revision), 0))
-                .where(ReviewTask.parent_id == parent_task.id)
+                .where(
+                    (ReviewTask.id == parent_task.id) | (ReviewTask.parent_id == parent_task.id)
+                )
             )).scalar()
             task = ReviewTask(
                 project_id=body.project_id,

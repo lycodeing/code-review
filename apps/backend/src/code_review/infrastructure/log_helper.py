@@ -15,7 +15,7 @@ async def create_llm_log(
     provider: str,
     url: str,
     request_body: dict,
-) -> UUID:
+) -> UUID | None:
     """在 LLM 调用发起前创建一条 in_progress 日志记录，返回日志 ID。"""
     try:
         async with session_factory() as session:
@@ -34,7 +34,7 @@ async def create_llm_log(
             return log.id
     except Exception as e:
         logger.warning("创建 LLM 调用日志失败: %s", e)
-        return UUID(int=0)
+        return None
 
 
 async def update_llm_log(
@@ -48,7 +48,7 @@ async def update_llm_log(
     duration_ms: int,
 ) -> None:
     """LLM 调用完成后更新已有的日志记录。"""
-    if log_id == UUID(int=0):
+    if log_id is None:
         return
     try:
         async with session_factory() as session:
