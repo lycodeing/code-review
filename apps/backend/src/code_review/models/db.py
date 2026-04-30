@@ -97,6 +97,7 @@ class ReviewTask(Base):
     )
     revision = Column(Integer, nullable=False, default=1, comment="版本号（第几次 push）")
     is_latest = Column(Boolean, nullable=False, default=True, comment="是否为最新版本")
+    agent_mode = Column(String(16), nullable=False, default="single", comment="评审模式: single/multi")
 
     project = relationship("Project", back_populates="reviews")
     comments = relationship("ReviewComment", back_populates="task", cascade="all, delete-orphan")

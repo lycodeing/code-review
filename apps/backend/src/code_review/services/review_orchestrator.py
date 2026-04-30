@@ -479,32 +479,72 @@ class ReviewOrchestrator:
                 last_error: Exception | None = None
                 tried_configs: list[str] = []
 
-                for config_name, llm_settings in llm_candidates:
+                # 读取评审模式
+                agent_mode = await settings_svc.get_string("agent_mode", "single")
+
+                if agent_mode == "multi":
+                    import json
+                    from code_review.core.agent_profile import AgentProfile
+                    from code_review.services.multi_agent_reviewer import MultiAgentReviewer
+
+                    profiles_json = await settings_svc.get_string(
+                        "agent_profiles",
+                        '[{"name":"security","focus":"安全漏洞、敏感信息泄露、注入风险","severity":"critical"},'
+                        '{"name":"performance","focus":"性能瓶颈、资源泄漏、N+1 查询","severity":"warning"},'
+                        '{"name":"quality","focus":"代码风格、可维护性、命名规范、重复代码","severity":"suggestion"}]',
+                    )
                     try:
-                        logger.info("尝试 LLM 配置: %s, model=%s", config_name, llm_settings.model)
-                        reviewer = LangChainReviewer(llm_settings)
+                        profiles_data = json.loads(profiles_json)
+                        profiles = [AgentProfile(**p) for p in profiles_data]
+                    except (json.JSONDecodeError, TypeError) as e:
+                        logger.warning("Agent profiles JSON 解析失败，降级到单 Agent: %s", e)
+                        agent_mode = "single"
+                        profiles = []
+
+                    if profiles:
+                        reviewer = MultiAgentReviewer(profiles)
                         result = await reviewer.review(
                             diff=combined_diff,
                             files=filtered_changes,
-                            prompt_template=prompt,
+                            base_template=prompt,
+                            llm_candidates=llm_candidates,
                             task_id=task.id,
                             session_factory=self._session_factory,
-                            related_context=related_context if related_context else None,
                             project_id=task.project_id,
                         )
-                        task.model_name = result.model
-                        logger.info("LLM 配置 %s 评审成功, model=%s", config_name, result.model)
-                        break
-                    except Exception as e:
-                        tried_configs.append(config_name)
-                        last_error = e
-                        logger.warning(
-                            "LLM 配置 %s (model=%s) 调用失败: %s",
-                            config_name, llm_settings.model, e,
-                        )
-                        if len(llm_candidates) > 1:
-                            logger.info("尝试故障转移到下一个 LLM 配置...")
-                        continue
+                        task.model_name = "multi-agent"
+                        task.agent_mode = "multi"
+                        logger.info("多 Agent 评审完成: %d 个 Agent, %d 条评论",
+                                    len(profiles), len(result.comments))
+
+                if agent_mode == "single" or result is None:
+                    task.agent_mode = "single"
+                    for config_name, llm_settings in llm_candidates:
+                        try:
+                            logger.info("尝试 LLM 配置: %s, model=%s", config_name, llm_settings.model)
+                            reviewer = LangChainReviewer(llm_settings)
+                            result = await reviewer.review(
+                                diff=combined_diff,
+                                files=filtered_changes,
+                                prompt_template=prompt,
+                                task_id=task.id,
+                                session_factory=self._session_factory,
+                                related_context=related_context if related_context else None,
+                                project_id=task.project_id,
+                            )
+                            task.model_name = result.model
+                            logger.info("LLM 配置 %s 评审成功, model=%s", config_name, result.model)
+                            break
+                        except Exception as e:
+                            tried_configs.append(config_name)
+                            last_error = e
+                            logger.warning(
+                                "LLM 配置 %s (model=%s) 调用失败: %s",
+                                config_name, llm_settings.model, e,
+                            )
+                            if len(llm_candidates) > 1:
+                                logger.info("尝试故障转移到下一个 LLM 配置...")
+                            continue
 
                 if result is None:
                     raise RuntimeError(
