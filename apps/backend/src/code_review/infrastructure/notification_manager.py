@@ -8,6 +8,8 @@ from code_review.core.notification import NotificationChannel, NotificationPaylo
 from code_review.infrastructure.notification_feishu import FeishuChannel
 from code_review.infrastructure.notification_dingtalk import DingTalkChannel
 from code_review.infrastructure.notification_email import EmailChannel
+from code_review.infrastructure.notification_wecom import WeComChannel
+from code_review.infrastructure.notification_slack import SlackChannel
 from code_review.models.config import AppConfig, EmailConfig
 
 logger = logging.getLogger(__name__)
@@ -17,6 +19,8 @@ CHANNEL_REGISTRY: dict[str, type[NotificationChannel]] = {
     "feishu": FeishuChannel,
     "dingtalk": DingTalkChannel,
     "email": EmailChannel,
+    "wecom": WeComChannel,
+    "slack": SlackChannel,
 }
 
 
