@@ -47,8 +47,8 @@
         </el-table-column>
         <el-table-column prop="call_type" label="类型" width="110" align="center">
           <template #default="{ row }">
-            <el-tag :type="row.call_type === 'llm' ? 'primary' : 'success'" size="small">
-              {{ row.call_type === 'llm' ? 'AI 调用' : '通知发送' }}
+            <el-tag :type="callTypeMap[row.call_type]?.type || 'info'" size="small">
+              {{ callTypeMap[row.call_type]?.label || row.call_type }}
             </el-tag>
           </template>
         </el-table-column>
@@ -124,8 +124,8 @@
       <div v-if="selectedLog">
         <el-descriptions :column="2" border size="small" style="margin-bottom: 16px">
           <el-descriptions-item label="类型">
-            <el-tag :type="selectedLog.call_type === 'llm' ? 'primary' : 'success'" size="small">
-              {{ selectedLog.call_type === 'llm' ? 'AI 调用' : '通知发送' }}
+            <el-tag :type="callTypeMap[selectedLog.call_type]?.type || 'info'" size="small">
+              {{ callTypeMap[selectedLog.call_type]?.label || selectedLog.call_type }}
             </el-tag>
           </el-descriptions-item>
           <el-descriptions-item label="提供商">{{ selectedLog.provider }}</el-descriptions-item>
@@ -168,7 +168,7 @@ import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Search, Refresh, Loading } from '@element-plus/icons-vue'
 import { getApiCallLogs } from '@/api/logs'
-import { formatDateTime, callLogStatusMap } from '@/utils/format'
+import { formatDateTime, callLogStatusMap, callTypeMap } from '@/utils/format'
 
 const loading = ref(false)
 const tableData = ref([])

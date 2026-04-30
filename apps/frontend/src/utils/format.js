@@ -66,3 +66,9 @@ export const callLogStatusMap = {
   timeout: { label: '超时', type: 'danger' },
   pending: { label: '等待中', type: 'info' },
 }
+
+/** 调用类型映射 */
+export const callTypeMap = {
+  llm: { label: 'AI 调用', type: 'primary' },
+  notification: { label: '通知发送', type: 'success' },
+}

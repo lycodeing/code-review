@@ -208,8 +208,8 @@
                 </el-table-column>
                 <el-table-column prop="call_type" label="类型" width="100" align="center">
                   <template #default="{ row }">
-                    <el-tag :type="row.call_type === 'llm' ? 'primary' : 'success'" size="small">
-                      {{ row.call_type === 'llm' ? 'AI 调用' : '通知发送' }}
+                    <el-tag :type="callTypeMap[row.call_type]?.type || 'info'" size="small">
+                      {{ callTypeMap[row.call_type]?.label || row.call_type }}
                     </el-tag>
                   </template>
                 </el-table-column>
@@ -294,7 +294,7 @@ import { ElMessage } from 'element-plus'
 import { RefreshRight, Bell, Document, Clock, Loading } from '@element-plus/icons-vue'
 import { getReview, getReviewComments, retryReview, sendReviewNotification, updateCommentFeedback, getReviewRevisions } from '@/api/reviews'
 import { getReviewLogs } from '@/api/logs'
-import { formatDateTime, callLogStatusMap as logStatusMap } from '@/utils/format'
+import { formatDateTime, callLogStatusMap as logStatusMap, callTypeMap } from '@/utils/format'
 import { renderMarkdown } from '@/utils/markdown'
 import StatusTag from '@/components/common/StatusTag.vue'
 import 'highlight.js/styles/github-dark.css'
