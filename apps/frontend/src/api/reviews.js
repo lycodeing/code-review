@@ -10,9 +10,15 @@ export function getReview(id) {
   return request.get(`/reviews/${id}`)
 }
 
-/** 获取评审评论 */
-export function getReviewComments(id) {
-  return request.get(`/reviews/${id}/comments`)
+/** 获取评审评论（支持指定版本） */
+export function getReviewComments(id, revision) {
+  const params = revision ? { revision } : {}
+  return request.get(`/reviews/${id}/comments`, { params })
+}
+
+/** 获取评审历史版本列表 */
+export function getReviewRevisions(id) {
+  return request.get(`/reviews/${id}/revisions`)
 }
 
 /** 删除单条评审记录 */

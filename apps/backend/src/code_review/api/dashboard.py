@@ -39,7 +39,7 @@ async def dashboard_stats(
             func.count().filter(ReviewTask.status == "completed").label("completed"),
             func.count().filter(ReviewTask.status == "failed").label("failed"),
             func.count().filter(ReviewTask.status == "in_progress").label("in_progress"),
-        )
+        ).where(ReviewTask.parent_id.is_(None))
         overview = (await session.execute(overview_stmt)).one()
 
         sd = _period_start(period, start_date, end_date)
@@ -55,7 +55,7 @@ async def dashboard_stats(
             func.coalesce(func.sum(ReviewTask.critical_count), 0).label("critical_count"),
             func.coalesce(func.sum(ReviewTask.warning_count), 0).label("warning_count"),
             func.coalesce(func.sum(ReviewTask.total_comments), 0).label("total_comments"),
-        ).where(period_filter)
+        ).where(period_filter, ReviewTask.parent_id.is_(None))
         ps = (await session.execute(period_stmt)).one()
 
         sev_stmt = (
@@ -74,7 +74,7 @@ async def dashboard_stats(
                 func.count(ReviewTask.id).label("review_count"),
             )
             .join(ReviewTask, ReviewTask.project_id == Project.id)
-            .where(period_filter)
+            .where(period_filter, ReviewTask.parent_id.is_(None))
             .group_by(Project.id, Project.name)
             .order_by(func.count(ReviewTask.id).desc())
             .limit(5)
@@ -132,7 +132,7 @@ async def dashboard_trend(
                 func.coalesce(func.sum(ReviewTask.critical_count), 0).label("critical"),
                 func.coalesce(func.sum(ReviewTask.warning_count), 0).label("warning"),
             )
-            .where(ReviewTask.created_at >= since)
+            .where(ReviewTask.created_at >= since, ReviewTask.parent_id.is_(None))
             .group_by(cast(ReviewTask.created_at, Date))
             .order_by(cast(ReviewTask.created_at, Date))
         )
@@ -167,7 +167,7 @@ async def dashboard_cost_analysis(request: Request):
             )
             .join(ReviewTask, ApiCallLog.task_id == ReviewTask.id)
             .join(Project, ReviewTask.project_id == Project.id)
-            .where(ApiCallLog.call_type == "llm")
+            .where(ApiCallLog.call_type == "llm", ReviewTask.parent_id.is_(None))
             .group_by(Project.name)
             .order_by(func.sum(ApiCallLog.duration_ms).desc())
         )
@@ -205,6 +205,7 @@ async def dashboard_cost_analysis(request: Request):
             ReviewTask.status == "completed",
             ReviewTask.started_at.isnot(None),
             ReviewTask.completed_at.isnot(None),
+            ReviewTask.parent_id.is_(None),
         )
         avg_row = (await session.execute(avg_stmt)).one()
 

@@ -5,11 +5,10 @@
 
 import logging
 from dataclasses import replace
-from datetime import datetime, timezone
 from fnmatch import fnmatch
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from code_review.adapters.factory import create_adapter
@@ -27,7 +26,7 @@ from code_review.infrastructure.langchain_reviewer import LangChainReviewer
 from code_review.infrastructure.notification_manager import NotificationManager
 from code_review.infrastructure.prompt_manager import PromptTemplateManager
 from code_review.models.config import AppConfig, LLMConfig
-from code_review.models.db import Base, Project, ReviewTask
+from code_review.models.db import Base, Project, ReviewTask, now_cst
 from code_review.models.db import ReviewComment as ReviewCommentDB
 from code_review.services.comment_aggregator import CommentAggregator
 from code_review.services.llm_config_service import LLMConfigService
@@ -118,8 +117,9 @@ class ReviewOrchestrator:
         """处理 Webhook 事件入口。
 
         1. 查找项目配置
-        2. 创建评审任务
-        3. 分发到 Celery 异步执行
+        2. 查找或创建主记录（同一 PR 复用）
+        3. 创建子版本记录（后续 push）
+        4. 分发到 Celery 异步执行
 
         注意：去重检查已在 webhook 端点层完成，此处不再重复检查。
         """
@@ -163,17 +163,93 @@ class ReviewOrchestrator:
                 )
                 return None
 
-            # 创建评审任务记录
-            task = ReviewTask(
-                project_id=project.id,
-                mr_iid=event.mr_iid,
-                event_id=event.event_id,
-                trigger_action=event.action,
-                mr_title=event.mr_title,
-                mr_author=event.mr_author,
-                mr_url=event.mr_url,
-                status=ReviewTask.Status.PENDING,
+            # 查找该 PR 是否已有主记录（FOR UPDATE 防止并发创建重复主记录）
+            existing = await session.execute(
+                select(ReviewTask).where(
+                    ReviewTask.project_id == project.id,
+                    ReviewTask.mr_iid == event.mr_iid,
+                    ReviewTask.parent_id.is_(None),
+                ).with_for_update()
             )
+            parent_task = existing.scalar_one_or_none()
+
+            if parent_task:
+                parent_task.is_latest = False
+                parent_task.mr_title = event.mr_title or parent_task.mr_title
+                parent_task.mr_author = event.mr_author or parent_task.mr_author
+                parent_task.mr_url = event.mr_url or parent_task.mr_url
+                parent_task.source_branch = event.source_branch or parent_task.source_branch
+                parent_task.target_branch = event.target_branch or parent_task.target_branch
+
+                # 批量清除所有旧子版本的 is_latest 标记
+                await session.execute(
+                    update(ReviewTask)
+                    .where(ReviewTask.parent_id == parent_task.id, ReviewTask.is_latest.is_(True))
+                    .values(is_latest=False)
+                )
+
+                # 取消所有未完成的旧版本（pending / in_progress）
+                now_naive = now_cst().replace(tzinfo=None)
+                cancel_result = await session.execute(
+                    update(ReviewTask)
+                    .where(
+                        (ReviewTask.id == parent_task.id) | (ReviewTask.parent_id == parent_task.id),
+                        ReviewTask.status.in_([ReviewTask.Status.PENDING, ReviewTask.Status.IN_PROGRESS]),
+                    )
+                    .values(
+                        status=ReviewTask.Status.CANCELLED,
+                        error_message="新评审已触发，自动取消",
+                        completed_at=now_naive,
+                    )
+                )
+                if cancel_result.rowcount:
+                    logger.info(
+                        "取消 %d 个未完成的旧版本（project=%s, mr=%s）",
+                        cancel_result.rowcount, project.name, event.mr_iid,
+                    )
+
+                # 取主记录和所有子版本中最大的 revision，防止 revision 号重复
+                max_rev = (await session.execute(
+                    select(func.coalesce(func.max(ReviewTask.revision), 0))
+                    .where(
+                        (ReviewTask.id == parent_task.id) | (ReviewTask.parent_id == parent_task.id)
+                    )
+                )).scalar()
+                new_revision = max_rev + 1
+
+                task = ReviewTask(
+                    project_id=project.id,
+                    mr_iid=event.mr_iid,
+                    event_id=event.event_id,
+                    trigger_action=event.action,
+                    mr_title=event.mr_title,
+                    mr_author=event.mr_author,
+                    mr_url=event.mr_url,
+                    source_branch=event.source_branch,
+                    target_branch=event.target_branch,
+                    status=ReviewTask.Status.PENDING,
+                    parent_id=parent_task.id,
+                    revision=new_revision,
+                    is_latest=True,
+                )
+            else:
+                # 首次创建主记录
+                task = ReviewTask(
+                    project_id=project.id,
+                    mr_iid=event.mr_iid,
+                    event_id=event.event_id,
+                    trigger_action=event.action,
+                    mr_title=event.mr_title,
+                    mr_author=event.mr_author,
+                    mr_url=event.mr_url,
+                    source_branch=event.source_branch,
+                    target_branch=event.target_branch,
+                    status=ReviewTask.Status.PENDING,
+                    parent_id=None,
+                    revision=1,
+                    is_latest=True,
+                )
+
             session.add(task)
             await session.commit()
             await session.refresh(task)
@@ -209,9 +285,14 @@ class ReviewOrchestrator:
                 return
 
             try:
+                # 执行前检查任务是否已被取消（新评审到来时会取消旧版本）
+                if task.status == ReviewTask.Status.CANCELLED:
+                    logger.info("任务已被取消，跳过执行: %s", task_id)
+                    return
+
                 # 更新状态为评审中
                 task.status = ReviewTask.Status.IN_PROGRESS
-                task.started_at = datetime.now(tz=timezone.utc)
+                task.started_at = now_cst()
                 await session.commit()
 
                 # 获取项目配置
@@ -254,7 +335,7 @@ class ReviewOrchestrator:
                 if not filtered_changes:
                     task.status = ReviewTask.Status.COMPLETED
                     task.summary = "No reviewable files found after filtering."
-                    task.completed_at = datetime.now(tz=timezone.utc)
+                    task.completed_at = now_cst()
                     await session.commit()
                     return
 
@@ -302,6 +383,12 @@ class ReviewOrchestrator:
 
                 logger.debug("项目 %s 的 LLM 配置链: %s", task.project_id, [c.name for c in llm_config_chain])
 
+                # 从系统配置获取 LLM 超时时间
+                from code_review.services.system_settings_service import SystemSettingsService
+                settings_svc = SystemSettingsService(session)
+                llm_timeout = await settings_svc.get_int("llm_timeout_seconds", 120)
+                llm_timeout_value = None if llm_timeout == -1 else llm_timeout
+
                 # 构造 LLM 配置候选列表
                 llm_candidates: list[tuple[str, LLMConfig]] = []
                 for llm_config in llm_config_chain:
@@ -312,7 +399,7 @@ class ReviewOrchestrator:
                         api_base=llm_config.api_base or "",
                         temperature=llm_config.extra_params.get("temperature", 0.3) if llm_config.extra_params else 0.3,
                         max_tokens=llm_config.extra_params.get("max_tokens", 4096) if llm_config.extra_params else 4096,
-                        timeout=llm_config.extra_params.get("timeout", 120) if llm_config.extra_params else 120,
+                        timeout=llm_config.extra_params.get("timeout", llm_timeout_value) if llm_config.extra_params else llm_timeout_value,
                         response_format=llm_config.response_format or "auto",
                         extra_params=llm_config.extra_params,
                     )
@@ -320,7 +407,9 @@ class ReviewOrchestrator:
 
                 # 无数据库配置时，降级到环境变量
                 if not llm_candidates:
-                    llm_candidates.append(("env_default", self._config.llm))
+                    env_llm = self._config.llm
+                    env_llm.timeout = llm_timeout_value if llm_timeout_value is not None else env_llm.timeout
+                    llm_candidates.append(("env_default", env_llm))
                     logger.info("无数据库 LLM 配置，降级到环境变量, model=%r", self._config.llm.model)
 
                 # 按优先级尝试 LLM 调用，失败则自动降级到下一个
@@ -357,6 +446,12 @@ class ReviewOrchestrator:
                     raise RuntimeError(
                         f"所有 LLM 配置均失败（已尝试: {', '.join(tried_configs)}）: {last_error}"
                     )
+
+                # LLM 调用完成后再次检查是否被取消（LLM 调用耗时最长，期间可能有新评审到来）
+                await session.refresh(task)
+                if task.status == ReviewTask.Status.CANCELLED:
+                    logger.info("任务在 LLM 调用期间被取消，跳过后续处理: %s", task_id)
+                    return
 
                 # 合并规则引擎评论和 LLM 评论
                 if rule_comments:
@@ -425,7 +520,7 @@ class ReviewOrchestrator:
                 )
 
                 task.status = ReviewTask.Status.COMPLETED
-                task.completed_at = datetime.now(tz=timezone.utc)
+                task.completed_at = now_cst()
                 await session.commit()
 
                 logger.info(
@@ -437,7 +532,7 @@ class ReviewOrchestrator:
                 logger.error("Review failed for task %s: %s", task_id, e, exc_info=True)
                 task.status = ReviewTask.Status.FAILED
                 task.error_message = str(e)
-                task.completed_at = datetime.now(tz=timezone.utc)
+                task.completed_at = now_cst()
                 await session.commit()
 
     async def _find_project(

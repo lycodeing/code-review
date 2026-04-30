@@ -11,7 +11,7 @@ from langchain_openai import ChatOpenAI
 from code_review.core.llm import LLMReviewer, ReviewComment, ReviewResult
 from code_review.core.platform import FileChange
 from code_review.core.errors import RetryableError
-from code_review.infrastructure.log_helper import save_llm_log
+from code_review.infrastructure.log_helper import create_llm_log, update_llm_log
 from code_review.infrastructure.response_parser import (
     MultiFormatResponseParser,
     ParsedReview,
@@ -123,6 +123,14 @@ class LangChainReviewer(LLMReviewer):
         }
         log_url = f"{self._config.api_base}/chat/completions" if self._config.api_base else "langchain"
 
+        log_id: UUID | None = None
+        if task_id is not None and session_factory is not None:
+            log_id = await create_llm_log(
+                session_factory, task_id,
+                provider=self._config.model, url=log_url,
+                request_body=log_request_body,
+            )
+
         t0 = time.perf_counter()
         try:
             # 构建消息
@@ -170,13 +178,9 @@ class LangChainReviewer(LLMReviewer):
             for warning in parsed_result.warnings:
                 logger.warning(f"解析警告: {warning}")
 
-            if task_id is not None and session_factory is not None:
-                await save_llm_log(
-                    session_factory,
-                    task_id,
-                    provider=self._config.model,
-                    url=log_url,
-                    request_body=log_request_body,
+            if log_id is not None:
+                await update_llm_log(
+                    session_factory, log_id,
                     response_status=200,
                     response_body={
                         "content": content[:_MAX_RESPONSE_CONTENT],
@@ -192,11 +196,9 @@ class LangChainReviewer(LLMReviewer):
         except ValueError as e:
             duration_ms = int((time.perf_counter() - t0) * 1000)
             logger.error("多格式解析器失败: %s", e)
-            if task_id is not None and session_factory is not None:
-                await save_llm_log(
-                    session_factory, task_id,
-                    provider=self._config.model, url=log_url,
-                    request_body=log_request_body,
+            if log_id is not None:
+                await update_llm_log(
+                    session_factory, log_id,
                     response_status=200, response_body={},
                     status="failed", error_message=str(e), duration_ms=duration_ms,
                 )
@@ -204,11 +206,9 @@ class LangChainReviewer(LLMReviewer):
         except Exception as e:
             duration_ms = int((time.perf_counter() - t0) * 1000)
             logger.error(f"LangChain LLM 调用失败: {e}", exc_info=True)
-            if task_id is not None and session_factory is not None:
-                await save_llm_log(
-                    session_factory, task_id,
-                    provider=self._config.model, url=log_url,
-                    request_body=log_request_body,
+            if log_id is not None:
+                await update_llm_log(
+                    session_factory, log_id,
                     response_status=0, response_body={},
                     status="failed", error_message=str(e), duration_ms=duration_ms,
                 )

@@ -44,7 +44,10 @@ export const reviewStatusMap = {
   pending: { label: '等待中', type: 'info' },
   in_progress: { label: '评审中', type: 'warning' },
   completed: { label: '已完成', type: 'success' },
-  failed: { label: '失败', type: 'danger' }
+  failed: { label: '失败', type: 'danger' },
+  timeout: { label: '超时', type: 'danger' },
+  skipped: { label: '已跳过', type: 'info' },
+  cancelled: { label: '已取消', type: 'info' }
 }
 
 /** 严重程度映射 */
@@ -53,4 +56,19 @@ export const severityMap = {
   warning: { label: '警告', type: 'warning' },
   suggestion: { label: '建议', type: 'info' },
   info: { label: '提示', type: '' }
+}
+
+/** 调用日志状态映射 */
+export const callLogStatusMap = {
+  success: { label: '成功', type: 'success' },
+  failed: { label: '失败', type: 'danger' },
+  in_progress: { label: '请求中', type: 'warning' },
+  timeout: { label: '超时', type: 'danger' },
+  pending: { label: '等待中', type: 'info' },
+}
+
+/** 调用类型映射 */
+export const callTypeMap = {
+  llm: { label: 'AI 调用', type: 'primary' },
+  notification: { label: '通知发送', type: 'success' },
 }

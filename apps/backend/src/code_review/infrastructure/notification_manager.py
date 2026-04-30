@@ -55,8 +55,14 @@ class NotificationManager:
     async def init_channels_from_db(self, session_factory, secret_key: str, platform: str = "") -> None:
         """从数据库加载通知渠道配置。"""
         from code_review.services.notification_config_service import NotificationConfigService
+        from code_review.services.system_settings_service import SystemSettingsService
 
         self._channels.clear()
+
+        # 获取通知超时配置
+        async with session_factory() as session:
+            settings_svc = SystemSettingsService(session)
+            notification_timeout = await settings_svc.get_int("notification_timeout_seconds", 30)
 
         async with session_factory() as session:
             svc = NotificationConfigService(session, secret_key)
@@ -72,7 +78,7 @@ class NotificationManager:
                 if cfg.channel == "email" and cfg.extra_config:
                     channel = self._create_email_channel(cfg)
                 else:
-                    channel = channel_cls(cfg)
+                    channel = channel_cls(cfg, timeout=notification_timeout)
                 if channel and channel.enabled:
                     self._channels.append((channel, cfg.id))
                     logger.info("Notification channel enabled from DB: %s", channel.name)

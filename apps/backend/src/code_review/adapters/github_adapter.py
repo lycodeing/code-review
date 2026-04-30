@@ -155,17 +155,21 @@ class GitHubAdapter(BasePlatformAdapter):
     async def publish_comments_batch(
         self, project_id: str, mr_iid: str, comments: list[PublishComment]
     ) -> list[str]:
-        """利用 GitHub Pull Request Review API 批量发布行内评论。"""
+        """利用 GitHub Pull Request Review API 批量发布行内评论。
+
+        批量发布失败时（如行号无法解析），降级为逐条发布并跳过无效评论。
+        """
+        from code_review.adapters.base import PlatformError
+
         owner, repo = self._parse_project_id(project_id)
 
         inline_comments = [c for c in comments if c.position]
         general_comments = [c for c in comments if not c.position]
 
-        review_id = None
         comment_ids = []
 
         if inline_comments:
-            # 创建 pending review 批量提交行内评论
+            # 构建评论列表
             review_comments = []
             for c in inline_comments:
                 rc: dict = {
@@ -179,16 +183,33 @@ class GitHubAdapter(BasePlatformAdapter):
                     rc["start_side"] = "LEFT"
                 review_comments.append(rc)
 
-            data = await self._request(
-                "POST",
-                f"/repos/{owner}/{repo}/pulls/{mr_iid}/reviews",
-                json={
-                    "body": "",
-                    "event": "COMMENT",
-                    "comments": review_comments,
-                },
-            )
-            review_id = data.get("id")
+            # 尝试批量发布
+            try:
+                data = await self._request(
+                    "POST",
+                    f"/repos/{owner}/{repo}/pulls/{mr_iid}/reviews",
+                    json={"body": "", "event": "COMMENT", "comments": review_comments},
+                )
+                data.get("id")
+            except PlatformError as e:
+                if e.status_code == 422:
+                    # 行号无法解析，降级为逐条发布
+                    logger.warning(
+                        "GitHub 批量评论 422，降级为逐条发布: %s", e.message
+                    )
+                    for c in inline_comments:
+                        try:
+                            cid = await self.publish_comment(project_id, mr_iid, c)
+                            comment_ids.append(cid)
+                        except PlatformError as ce:
+                            logger.warning(
+                                "跳过无效评论 [%s:%s]: %s",
+                                c.position.path if c.position else "?",
+                                c.position.line if c.position else "?",
+                                ce.message,
+                            )
+                else:
+                    raise
 
         # 通用评论逐条发布
         for c in general_comments:

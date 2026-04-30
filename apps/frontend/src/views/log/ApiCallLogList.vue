@@ -13,6 +13,7 @@
           <el-select v-model="filters.status" placeholder="全部" clearable style="width: 120px">
             <el-option label="成功" value="success" />
             <el-option label="失败" value="failed" />
+            <el-option label="进行中" value="in_progress" />
           </el-select>
         </el-form-item>
         <el-form-item label="提供商">
@@ -46,16 +47,21 @@
         </el-table-column>
         <el-table-column prop="call_type" label="类型" width="110" align="center">
           <template #default="{ row }">
-            <el-tag :type="row.call_type === 'llm' ? 'primary' : 'success'" size="small">
-              {{ row.call_type === 'llm' ? 'AI 调用' : '通知发送' }}
+            <el-tag :type="callTypeMap[row.call_type]?.type || 'info'" size="small">
+              {{ callTypeMap[row.call_type]?.label || row.call_type }}
             </el-tag>
           </template>
         </el-table-column>
         <el-table-column prop="provider" label="提供商" width="170" show-overflow-tooltip />
-        <el-table-column prop="status" label="结果" width="90" align="center">
+        <el-table-column prop="status" label="结果" width="120" align="center">
           <template #default="{ row }">
-            <el-tag :type="row.status === 'success' ? 'success' : 'danger'" size="small">
-              {{ row.status === 'success' ? '成功' : '失败' }}
+            <el-tag
+              :type="callLogStatusMap[row.status]?.type || 'info'"
+              size="small"
+              :class="{ 'status-pulse': row.status === 'in_progress' }"
+            >
+              <el-icon v-if="row.status === 'in_progress'" class="is-loading" style="margin-right: 2px"><Loading /></el-icon>
+              {{ callLogStatusMap[row.status]?.label || row.status }}
             </el-tag>
           </template>
         </el-table-column>
@@ -118,14 +124,14 @@
       <div v-if="selectedLog">
         <el-descriptions :column="2" border size="small" style="margin-bottom: 16px">
           <el-descriptions-item label="类型">
-            <el-tag :type="selectedLog.call_type === 'llm' ? 'primary' : 'success'" size="small">
-              {{ selectedLog.call_type === 'llm' ? 'AI 调用' : '通知发送' }}
+            <el-tag :type="callTypeMap[selectedLog.call_type]?.type || 'info'" size="small">
+              {{ callTypeMap[selectedLog.call_type]?.label || selectedLog.call_type }}
             </el-tag>
           </el-descriptions-item>
           <el-descriptions-item label="提供商">{{ selectedLog.provider }}</el-descriptions-item>
           <el-descriptions-item label="结果">
-            <el-tag :type="selectedLog.status === 'success' ? 'success' : 'danger'" size="small">
-              {{ selectedLog.status === 'success' ? '成功' : '失败' }}
+            <el-tag :type="callLogStatusMap[selectedLog.status]?.type || 'info'" size="small">
+              {{ callLogStatusMap[selectedLog.status]?.label || selectedLog.status }}
             </el-tag>
           </el-descriptions-item>
           <el-descriptions-item label="HTTP状态码">{{ selectedLog.response_status ?? '-' }}</el-descriptions-item>
@@ -160,9 +166,9 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Search, Refresh } from '@element-plus/icons-vue'
+import { Search, Refresh, Loading } from '@element-plus/icons-vue'
 import { getApiCallLogs } from '@/api/logs'
-import { formatDateTime } from '@/utils/format'
+import { formatDateTime, callLogStatusMap, callTypeMap } from '@/utils/format'
 
 const loading = ref(false)
 const tableData = ref([])

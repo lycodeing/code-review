@@ -19,6 +19,8 @@
             <el-option label="评审中" value="in_progress" />
             <el-option label="已完成" value="completed" />
             <el-option label="失败" value="failed" />
+            <el-option label="超时" value="timeout" />
+            <el-option label="已取消" value="cancelled" />
           </el-select>
         </el-form-item>
         <el-form-item label="MR 标题">
@@ -99,6 +101,12 @@
           </template>
         </el-table-column>
         <el-table-column prop="model_name" label="模型" width="140" show-overflow-tooltip />
+        <el-table-column prop="revision" label="版本" width="70" align="center">
+          <template #default="{ row }">
+            <el-tag v-if="row.revision > 1" size="small" type="info">#{{ row.revision }}</el-tag>
+            <span v-else>-</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="created_at" label="创建时间" width="175">
           <template #default="{ row }">{{ formatDateTime(row.created_at) }}</template>
         </el-table-column>
@@ -109,7 +117,7 @@
                 详情
               </el-button>
               <el-button
-                v-if="row.status === 'failed'"
+                v-if="row.status === 'failed' || row.status === 'timeout'"
                 text
                 type="warning"
                 size="small"
@@ -241,14 +249,10 @@ const filters = ref({
   keyword: ''
 })
 
-const { loading, tableData, total, pagination, loadData, handlePageChange, handleSizeChange } = useTable(getReviews)
+const { loading, tableData, total, pagination, loadData, handlePageChange, handleSizeChange } = useTable(getReviews, 20)
 
 const filteredData = computed(() => {
-  let data = tableData.value
-  if (filters.value.keyword) {
-    data = data.filter((r) => r.mr_title?.includes(filters.value.keyword))
-  }
-  return data
+  return tableData.value
 })
 
 // 批量选择
@@ -265,10 +269,14 @@ function handleSelectionChange(selection) {
 async function handleRetry(row) {
   try {
     retryingIds.value.add(row.id)
+    // 立即将状态更新为评审中
+    row.status = 'in_progress'
+    row.error_message = null
     await retryReview(row.id)
     ElMessage.success('已重新提交评审任务')
-    loadData(filters.value)
   } catch (error) {
+    // 失败时回滚
+    row.status = 'failed'
     ElMessage.error(error.message || '重试失败')
   } finally {
     retryingIds.value.delete(row.id)
@@ -376,9 +384,20 @@ async function handleBatchRetry() {
       }
     )
     const result = await batchRetryReviews(selectedIds.value)
-    ElMessage.success(`已提交 ${result.retried} 条重试任务`)
+    if (result.skipped > 0) {
+      ElMessage.success(`已提交 ${result.retried} 条重试任务，跳过 ${result.skipped} 条已完成记录`)
+    } else {
+      ElMessage.success(`已提交 ${result.retried} 条重试任务`)
+    }
+    // 立即将重试成功的记录状态更新为评审中
+    const retryIdSet = new Set(selectedIds.value.map(String))
+    for (const row of tableData.value) {
+      if (retryIdSet.has(String(row.id)) && (row.status === 'failed' || row.status === 'timeout')) {
+        row.status = 'in_progress'
+        row.error_message = null
+      }
+    }
     selectedIds.value = []
-    loadData(filters.value)
   } catch (error) {
     if (error !== 'cancel') {
       ElMessage.error(error.message || '批量重试失败')

@@ -6,9 +6,9 @@
         <StatusTag v-if="detail.status" :status="detail.status" style="margin-left: 8px" />
       </template>
       <template #extra>
-        <div style="display: flex; gap: 8px">
+        <div style="display: flex; gap: 8px; align-items: center">
           <el-button
-            v-if="detail.status === 'failed'"
+            v-if="detail.status === 'failed' || detail.status === 'timeout'"
             type="warning"
             :loading="retrying"
             @click="handleRetry"
@@ -27,6 +27,40 @@
         </div>
       </template>
     </el-page-header>
+
+    <!-- 评审历史版本面板 -->
+    <el-card v-if="revisions.length > 0" shadow="never" class="revision-card">
+      <template #header>
+        <div class="revision-header">
+          <div class="revision-title">
+            <el-icon style="margin-right: 4px"><Clock /></el-icon>
+            <span>评审历史</span>
+            <el-tag size="small" type="info" style="margin-left: 8px">{{ revisions.length }} 个版本</el-tag>
+          </div>
+        </div>
+      </template>
+      <TransitionGroup name="revision-fade" tag="div" class="revision-list">
+        <div
+          v-for="rev in sortedRevisions"
+          :key="rev.id"
+          :class="['revision-item', { active: selectedRevision === rev.revision }]"
+          @click="switchRevision(rev.revision)"
+        >
+          <div class="revision-left">
+            <span class="revision-number">{{ String(rev.revision).padStart(2, '0') }}</span>
+            <StatusTag :status="rev.status" />
+          </div>
+          <div class="revision-center">
+            <span class="revision-date">{{ formatDate(rev.created_at) }}</span>
+            <span class="revision-trigger">{{ rev.trigger_action }}</span>
+          </div>
+          <div class="revision-right">
+            <span class="revision-model">{{ rev.model_name || '-' }}</span>
+            <span class="revision-time">{{ formatTime(rev.created_at) }}</span>
+          </div>
+        </div>
+      </TransitionGroup>
+    </el-card>
 
     <div v-loading="loading" style="margin-top: 20px">
       <el-tabs v-model="activeTab">
@@ -60,7 +94,7 @@
 
             <div v-if="detail.summary" class="summary-section">
               <h4>评审摘要</h4>
-              <div class="summary-content">{{ detail.summary }}</div>
+              <div class="summary-content md-content" v-html="renderMarkdown(detail.summary)" />
             </div>
 
             <el-alert
@@ -76,7 +110,6 @@
         <!-- 评审评论 Tab -->
         <el-tab-pane :label="`评审评论 (${comments.length})`" name="comments">
           <el-card shadow="never" class="detail-card">
-            <!-- 评论筛选栏 -->
             <div v-if="comments.length" class="comment-filter-bar">
               <el-select v-model="commentSeverityFilter" placeholder="严重程度" clearable size="small" style="width: 140px">
                 <el-option label="严重" value="critical" />
@@ -91,35 +124,35 @@
               </el-radio-group>
             </div>
 
-            <!-- 列表模式 -->
             <div v-if="comments.length && commentViewMode === 'flat'">
-              <div v-for="comment in filteredComments" :key="comment.id" class="comment-item">
-                <div class="comment-header">
-                  <div class="comment-file">
-                    <el-icon><Document /></el-icon>
-                    <span>{{ comment.file_path }}</span>
+              <TransitionGroup name="comment-slide" tag="div">
+                <div v-for="comment in filteredComments" :key="comment.id" class="comment-item">
+                  <div class="comment-header">
+                    <div class="comment-file">
+                      <el-icon><Document /></el-icon>
+                      <span>{{ comment.file_path }}</span>
+                    </div>
+                    <div class="comment-meta">
+                      <StatusTag :status="comment.severity" type="severity" />
+                      <span v-if="comment.line_start" class="line-range">
+                        L{{ comment.line_start }}{{ comment.line_end !== comment.line_start ? ` - L${comment.line_end}` : '' }}
+                      </span>
+                    </div>
                   </div>
-                  <div class="comment-meta">
-                    <StatusTag :status="comment.severity" type="severity" />
-                    <span v-if="comment.line_start" class="line-range">
-                      L{{ comment.line_start }}{{ comment.line_end !== comment.line_start ? ` - L${comment.line_end}` : '' }}
-                    </span>
+                  <div class="comment-body md-content" v-html="renderMarkdown(comment.message)" />
+                  <div v-if="comment.suggestion" class="comment-suggestion">
+                    <strong>建议修复：</strong>
+                    <div class="md-content" v-html="renderMarkdown(comment.suggestion)" />
+                  </div>
+                  <div class="comment-feedback">
+                    <el-button text size="small" :type="comment.feedback === 'thumbs_up' ? 'primary' : ''" @click="handleFeedback(comment, 'thumbs_up')">👍 有用</el-button>
+                    <el-button text size="small" :type="comment.feedback === 'thumbs_down' ? 'danger' : ''" @click="handleFeedback(comment, 'thumbs_down')">👎 无用</el-button>
                   </div>
                 </div>
-                <div class="comment-body md-content" v-html="renderMarkdown(comment.message)" />
-                <div v-if="comment.suggestion" class="comment-suggestion">
-                  <strong>建议修复：</strong>
-                  <div class="md-content" v-html="renderMarkdown(comment.suggestion)" />
-                </div>
-                <div class="comment-feedback">
-                  <el-button text size="small" :type="comment.feedback === 'thumbs_up' ? 'primary' : ''" @click="handleFeedback(comment, 'thumbs_up')">👍 有用</el-button>
-                  <el-button text size="small" :type="comment.feedback === 'thumbs_down' ? 'danger' : ''" @click="handleFeedback(comment, 'thumbs_down')">👎 无用</el-button>
-                </div>
-              </div>
+              </TransitionGroup>
               <el-empty v-if="!filteredComments.length" description="没有匹配的评论" :image-size="60" />
             </div>
 
-            <!-- 按文件分组模式 -->
             <div v-if="comments.length && commentViewMode === 'grouped'">
               <el-collapse v-model="expandedFiles">
                 <el-collapse-item
@@ -175,21 +208,30 @@
                 </el-table-column>
                 <el-table-column prop="call_type" label="类型" width="100" align="center">
                   <template #default="{ row }">
-                    <el-tag :type="row.call_type === 'llm' ? 'primary' : 'success'" size="small">
-                      {{ row.call_type === 'llm' ? 'AI 调用' : '通知发送' }}
+                    <el-tag :type="callTypeMap[row.call_type]?.type || 'info'" size="small">
+                      {{ callTypeMap[row.call_type]?.label || row.call_type }}
                     </el-tag>
                   </template>
                 </el-table-column>
                 <el-table-column prop="provider" label="提供商" width="150" show-overflow-tooltip />
                 <el-table-column prop="status" label="结果" width="90" align="center">
                   <template #default="{ row }">
-                    <el-tag :type="row.status === 'success' ? 'success' : 'danger'" size="small">
-                      {{ row.status === 'success' ? '成功' : '失败' }}
+                    <el-tag
+                      :type="logStatusMap[row.status]?.type || 'info'"
+                      size="small"
+                      :class="{ 'status-pulse': row.status === 'in_progress' }"
+                    >
+                      <el-icon v-if="row.status === 'in_progress'" class="is-loading" style="margin-right: 2px"><Loading /></el-icon>
+                      {{ logStatusMap[row.status]?.label || row.status }}
                     </el-tag>
                   </template>
                 </el-table-column>
-                <el-table-column prop="response_status" label="HTTP状态" width="90" align="center" />
-                <el-table-column prop="duration_ms" label="耗时(ms)" width="95" align="right" />
+                <el-table-column prop="response_status" label="HTTP状态" width="90" align="center">
+                  <template #default="{ row }">{{ row.response_status ?? '-' }}</template>
+                </el-table-column>
+                <el-table-column prop="duration_ms" label="耗时(ms)" width="95" align="right">
+                  <template #default="{ row }">{{ row.duration_ms != null ? row.duration_ms : '-' }}</template>
+                </el-table-column>
                 <el-table-column prop="error_message" label="错误信息" min-width="160" show-overflow-tooltip />
                 <el-table-column label="详情" width="70" align="center">
                   <template #default="{ row }">
@@ -249,10 +291,10 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { RefreshRight, Bell, Document } from '@element-plus/icons-vue'
-import { getReview, getReviewComments, retryReview, sendReviewNotification, updateCommentFeedback } from '@/api/reviews'
+import { RefreshRight, Bell, Document, Clock, Loading } from '@element-plus/icons-vue'
+import { getReview, getReviewComments, retryReview, sendReviewNotification, updateCommentFeedback, getReviewRevisions } from '@/api/reviews'
 import { getReviewLogs } from '@/api/logs'
-import { formatDateTime } from '@/utils/format'
+import { formatDateTime, callLogStatusMap as logStatusMap, callTypeMap } from '@/utils/format'
 import { renderMarkdown } from '@/utils/markdown'
 import StatusTag from '@/components/common/StatusTag.vue'
 import 'highlight.js/styles/github-dark.css'
@@ -266,19 +308,23 @@ const logsLoading = ref(false)
 const activeTab = ref('info')
 const retrying = ref(false)
 const notifying = ref(false)
+const revisions = ref([])
+const selectedRevision = ref(null)
 
-// 日志抽屉
 const logDrawerVisible = ref(false)
 const selectedLog = ref(null)
 const activeCollapseItems = ref(['req_headers', 'req_body', 'resp_body'])
 
-// 评论筛选
 const commentSeverityFilter = ref('')
 const commentFileSearch = ref('')
 const commentViewMode = ref('flat')
 const expandedFiles = ref([])
 
 const severityOrder = { critical: 4, warning: 3, suggestion: 2, info: 1 }
+
+const sortedRevisions = computed(() => {
+  return [...revisions.value].sort((a, b) => b.revision - a.revision)
+})
 
 const filteredComments = computed(() => {
   let data = comments.value
@@ -313,6 +359,19 @@ const groupedComments = computed(() => {
   return groups
 })
 
+function formatDate(dt) {
+  if (!dt) return '-'
+  const d = new Date(dt)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+function formatTime(dt) {
+  if (!dt) return '-'
+  const d = new Date(dt)
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
+
 function openLogDetail(row) {
   selectedLog.value = row
   logDrawerVisible.value = true
@@ -339,14 +398,78 @@ async function loadDetail() {
   loading.value = true
   try {
     const id = route.params.id
-    const [taskData, commentsData, logsData] = await Promise.all([
-      getReview(id),
-      getReviewComments(id),
-      getReviewLogs(id)
+
+    // 并行加载详情和版本列表
+    const [taskData, revisionsData] = await Promise.all([
+      getReview(id).catch(() => null),
+      getReviewRevisions(id).catch(() => []),
     ])
+
+    if (!taskData) {
+      ElMessage.error('评审记录不存在')
+      loading.value = false
+      return
+    }
+
     detail.value = taskData
+    revisions.value = Array.isArray(revisionsData) ? revisionsData : []
+
+    // 默认选中最新版本
+    if (revisions.value.length > 0) {
+      const latest = revisions.value.reduce((a, b) => (a.revision > b.revision ? a : b))
+      selectedRevision.value = latest.revision
+    }
+
+    // 加载当前版本的数据
+    await loadRevisionData(selectedRevision.value)
+  } catch (e) {
+    console.error('加载评审详情失败:', e)
+  } finally {
+    loading.value = false
+  }
+}
+
+async function loadRevisionData(revision) {
+  const id = route.params.id
+  try {
+    // 对于只有 1 个版本（revision=1，无子版本）的旧记录，不传 revision 参数
+    const hasMultipleRevisions = revisions.value.length > 1
+    const revParam = hasMultipleRevisions ? revision : undefined
+
+    const [commentsData, logsData] = await Promise.all([
+      getReviewComments(id, revParam).catch(() => []),
+      getReviewLogs(id, revParam).catch(() => []),
+    ])
     comments.value = Array.isArray(commentsData) ? commentsData : []
     logs.value = Array.isArray(logsData) ? logsData : []
+  } catch (e) {
+    console.error('加载版本数据失败:', e)
+    comments.value = []
+    logs.value = []
+  }
+}
+
+async function switchRevision(revision) {
+  if (revision === selectedRevision.value) return
+  loading.value = true
+  selectedRevision.value = revision
+  try {
+    await loadRevisionData(revision)
+    const revTask = revisions.value.find(r => r.revision === revision)
+    if (revTask) {
+      detail.value = { ...detail.value, ...{
+        status: revTask.status,
+        trigger_action: revTask.trigger_action,
+        model_name: revTask.model_name,
+        total_comments: revTask.total_comments,
+        critical_count: revTask.critical_count,
+        warning_count: revTask.warning_count,
+        summary: revTask.summary,
+        error_message: revTask.error_message,
+        started_at: revTask.started_at,
+        completed_at: revTask.completed_at,
+      }}
+    }
   } catch {
     // 拦截器已处理
   } finally {
@@ -357,7 +480,9 @@ async function loadDetail() {
 async function loadLogs() {
   logsLoading.value = true
   try {
-    const data = await getReviewLogs(route.params.id)
+    const hasMultipleRevisions = revisions.value.length > 1
+    const revParam = hasMultipleRevisions ? selectedRevision.value : undefined
+    const data = await getReviewLogs(route.params.id, revParam)
     logs.value = Array.isArray(data) ? data : []
   } catch {
     // ignore
@@ -369,10 +494,20 @@ async function loadLogs() {
 async function handleRetry() {
   retrying.value = true
   try {
+    // 立即将状态更新为评审中
+    detail.value = { ...detail.value, status: 'in_progress', error_message: null }
+    // 同步更新版本列表中对应记录的状态
+    const latestRev = revisions.value.reduce((a, b) => a.revision > b.revision ? a : b, revisions.value[0])
+    if (latestRev) {
+      latestRev.status = 'in_progress'
+      latestRev.error_message = null
+    }
+
     await retryReview(route.params.id)
     ElMessage.success('已重新提交评审任务')
-    await loadDetail()
   } catch (error) {
+    // 失败时回滚状态
+    detail.value = { ...detail.value, status: 'failed', error_message: error.message || '重试失败' }
     ElMessage.error(error.message || '重试失败')
   } finally {
     retrying.value = false
@@ -389,7 +524,6 @@ async function handleSendNotification() {
     } else {
       ElMessage.warning(`通知发送失败，请检查通知渠道配置`)
     }
-    // 刷新日志
     await loadLogs()
   } catch (error) {
     ElMessage.error(error.message || '发送通知失败')
@@ -569,5 +703,177 @@ onMounted(loadDetail)
   font-weight: 600;
   &.critical { background: #fef0f0; color: #f56c6c; }
   &.warning { background: #fdf6ec; color: #e6a23c; }
+}
+
+// 评审历史面板
+.revision-card {
+  margin-top: 16px;
+  border-radius: $border-radius;
+  border: 1px solid #e4e7ed;
+
+  :deep(.el-card__header) {
+    padding: 12px 20px;
+    background: #f5f7fa;
+  }
+
+  :deep(.el-card__body) {
+    padding: 8px;
+  }
+}
+
+.revision-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.revision-title {
+  display: flex;
+  align-items: center;
+  font-size: 14px;
+  font-weight: 600;
+  color: #303133;
+}
+
+.revision-list {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 4px 0;
+}
+
+.revision-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  border: 2px solid #e4e7ed;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+  min-width: 180px;
+  flex-shrink: 0;
+
+  &:hover {
+    border-color: #c0c4cc;
+    background: #fafafa;
+  }
+
+  &.active {
+    border-color: #409eff;
+    background: #ecf5ff;
+    box-shadow: 0 0 0 1px #409eff;
+  }
+}
+
+.revision-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.revision-number {
+  font-size: 18px;
+  font-weight: 700;
+  color: #606266;
+  font-family: monospace;
+  min-width: 22px;
+  text-align: center;
+
+  .active & {
+    color: #409eff;
+  }
+}
+
+.revision-center {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.revision-trigger {
+  font-size: 12px;
+  color: #909399;
+}
+
+.revision-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+.revision-date {
+  font-size: 12px;
+  color: #606266;
+  font-weight: 500;
+}
+
+.revision-model {
+  font-size: 11px;
+  color: #909399;
+  max-width: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.revision-time {
+  font-size: 11px;
+  color: #c0c4cc;
+}
+
+// 评审历史版本过渡动画
+.revision-fade-enter-active {
+  transition: all 0.3s ease-out;
+}
+.revision-fade-leave-active {
+  transition: all 0.2s ease-in;
+}
+.revision-fade-enter-from {
+  opacity: 0;
+  transform: translateX(20px);
+}
+.revision-fade-leave-to {
+  opacity: 0;
+  transform: translateX(-20px);
+}
+.revision-fade-move {
+  transition: transform 0.3s ease;
+}
+
+// 评论列表过渡动画
+.comment-slide-enter-active {
+  transition: all 0.3s ease-out;
+}
+.comment-slide-leave-active {
+  transition: all 0.2s ease-in;
+}
+.comment-slide-enter-from {
+  opacity: 0;
+  transform: translateY(10px);
+}
+.comment-slide-leave-to {
+  opacity: 0;
+  transform: translateY(-10px);
+}
+
+// 调用日志状态动画
+.status-pulse {
+  animation: pulse-opacity 1.5s ease-in-out infinite;
+}
+
+:deep(.is-loading) {
+  animation: spin-anim 1s linear infinite;
+}
+
+@keyframes spin-anim {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes pulse-opacity {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
 }
 </style>

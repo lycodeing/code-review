@@ -7,6 +7,8 @@ import logging
 from datetime import datetime, timezone
 from uuid import UUID
 
+from code_review.models.db import now_cst
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -90,7 +92,7 @@ class NotificationTemplateService:
             tpl.description = description
         if enabled is not None:
             tpl.enabled = enabled
-        tpl.updated_at = datetime.now(tz=timezone.utc)
+        tpl.updated_at = now_cst()
         await self._session.commit()
         await self._session.refresh(tpl)
         return tpl
@@ -272,7 +274,7 @@ class NotificationTemplateService:
                 )
 
         nc.template_id = template_id
-        nc.updated_at = datetime.now(tz=timezone.utc)
+        nc.updated_at = now_cst()
         await self._session.commit()
         await self._session.refresh(nc)
         return nc

@@ -2,7 +2,7 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# 安装系统依赖（仅需编译 asyncpg 等 C 扩展）
+# 安装系统依赖（编译 asyncpg 等 C 扩展）
 RUN apt-get update && \
     apt-get install -y --no-install-recommends gcc libpq-dev && \
     rm -rf /var/lib/apt/lists/*
@@ -11,13 +11,12 @@ RUN apt-get update && \
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 # 优先复制依赖声明，安装所有依赖
-# 在代码变更时，依赖层不会重新构建（层缓存优化）
 COPY pyproject.toml uv.lock ./
 RUN mkdir -p src/code_review && touch src/code_review/__init__.py && \
     uv pip install --system --no-cache . && \
     rm -rf src/code_review
 
-# 复制源代码（PYTHONPATH 优先于 site-packages，使用实际代码）
+# 复制源代码
 COPY src/ src/
 
 ENV PYTHONPATH=/app/src

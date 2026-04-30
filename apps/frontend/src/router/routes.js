@@ -72,6 +72,12 @@ const routes = [
         meta: { title: '评审规则', icon: 'Filter' }
       },
       {
+        path: 'system-settings',
+        name: 'SystemSettings',
+        component: () => import('@/views/system/TimeoutConfig.vue'),
+        meta: { title: '系统配置', icon: 'Setting' }
+      },
+      {
         path: 'request-history',
         name: 'RequestHistory',
         component: () => import('@/views/log/ApiCallLogList.vue'),

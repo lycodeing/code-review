@@ -3,6 +3,8 @@
 from datetime import datetime, timezone
 from uuid import UUID
 
+from code_review.models.db import now_cst
+
 from fastapi import APIRouter, HTTPException, Request, Query
 from pydantic import BaseModel, Field, ConfigDict
 from sqlalchemy import select
@@ -110,7 +112,7 @@ async def update_project(project_id: UUID, body: ProjectUpdate, request: Request
             project.config = body.config
         if body.enabled is not None:
             project.enabled = body.enabled
-        project.updated_at = datetime.now(tz=timezone.utc)
+        project.updated_at = now_cst()
         await session.commit()
         await session.refresh(project)
         return project

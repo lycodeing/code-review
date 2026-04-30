@@ -3,6 +3,8 @@
 from datetime import datetime, timezone
 from uuid import UUID
 
+from code_review.models.db import now_cst
+
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field, ConfigDict
 from sqlalchemy import select
@@ -165,7 +167,7 @@ async def update_rule(rule_id: UUID, body: RuleUpdate, request: Request):
 
         for key, value in body.model_dump(exclude_none=True).items():
             setattr(rule, key, value)
-        rule.updated_at = datetime.now(tz=timezone.utc)
+        rule.updated_at = now_cst()
         await session.commit()
         await session.refresh(rule)
         return rule
