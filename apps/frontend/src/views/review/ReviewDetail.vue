@@ -126,29 +126,12 @@
 
             <div v-if="comments.length && commentViewMode === 'flat'">
               <TransitionGroup name="comment-slide" tag="div">
-                <div v-for="comment in filteredComments" :key="comment.id" class="comment-item">
-                  <div class="comment-header">
-                    <div class="comment-file">
-                      <el-icon><Document /></el-icon>
-                      <span>{{ comment.file_path }}</span>
-                    </div>
-                    <div class="comment-meta">
-                      <StatusTag :status="comment.severity" type="severity" />
-                      <span v-if="comment.line_start" class="line-range">
-                        L{{ comment.line_start }}{{ comment.line_end !== comment.line_start ? ` - L${comment.line_end}` : '' }}
-                      </span>
-                    </div>
-                  </div>
-                  <div class="comment-body md-content" v-html="renderMarkdown(comment.message)" />
-                  <div v-if="comment.suggestion" class="comment-suggestion">
-                    <strong>建议修复：</strong>
-                    <div class="md-content" v-html="renderMarkdown(comment.suggestion)" />
-                  </div>
-                  <div class="comment-feedback">
-                    <el-button text size="small" :type="comment.feedback === 'thumbs_up' ? 'primary' : ''" @click="handleFeedback(comment, 'thumbs_up')">👍 有用</el-button>
-                    <el-button text size="small" :type="comment.feedback === 'thumbs_down' ? 'danger' : ''" @click="handleFeedback(comment, 'thumbs_down')">👎 无用</el-button>
-                  </div>
-                </div>
+                <CommentItem
+                  v-for="comment in filteredComments"
+                  :key="comment.id"
+                  :comment="comment"
+                  @feedback="handleFeedback"
+                />
               </TransitionGroup>
               <el-empty v-if="!filteredComments.length" description="没有匹配的评论" :image-size="60" />
             </div>
@@ -169,25 +152,13 @@
                       <span v-else-if="group.maxSeverity === 'warning'" class="severity-badge warning">警告</span>
                     </div>
                   </template>
-                  <div v-for="comment in group.comments" :key="comment.id" class="comment-item">
-                    <div class="comment-header">
-                      <div class="comment-meta">
-                        <StatusTag :status="comment.severity" type="severity" />
-                        <span v-if="comment.line_start" class="line-range">
-                          L{{ comment.line_start }}{{ comment.line_end !== comment.line_start ? ` - L${comment.line_end}` : '' }}
-                        </span>
-                      </div>
-                    </div>
-                    <div class="comment-body md-content" v-html="renderMarkdown(comment.message)" />
-                    <div v-if="comment.suggestion" class="comment-suggestion">
-                      <strong>建议修复：</strong>
-                      <div class="md-content" v-html="renderMarkdown(comment.suggestion)" />
-                    </div>
-                    <div class="comment-feedback">
-                      <el-button text size="small" :type="comment.feedback === 'thumbs_up' ? 'primary' : ''" @click="handleFeedback(comment, 'thumbs_up')">👍 有用</el-button>
-                      <el-button text size="small" :type="comment.feedback === 'thumbs_down' ? 'danger' : ''" @click="handleFeedback(comment, 'thumbs_down')">👎 无用</el-button>
-                    </div>
-                  </div>
+                  <CommentItem
+                    v-for="comment in group.comments"
+                    :key="comment.id"
+                    :comment="comment"
+                    :show-file="false"
+                    @feedback="handleFeedback"
+                  />
                 </el-collapse-item>
               </el-collapse>
               <el-empty v-if="!groupedComments.length" description="没有匹配的评论" :image-size="60" />
@@ -249,41 +220,11 @@
     </div>
 
     <!-- 日志详情抽屉 -->
-    <el-drawer
-      v-model="logDrawerVisible"
-      title="调用详情"
+    <LogDetailDrawer
+      v-model:visible="logDrawerVisible"
+      :log="selectedLog"
       size="600px"
-      direction="rtl"
-    >
-      <div v-if="selectedLog">
-        <el-descriptions :column="2" border size="small" style="margin-bottom: 16px">
-          <el-descriptions-item label="类型">{{ selectedLog.call_type }}</el-descriptions-item>
-          <el-descriptions-item label="提供商">{{ selectedLog.provider }}</el-descriptions-item>
-          <el-descriptions-item label="状态">{{ selectedLog.status }}</el-descriptions-item>
-          <el-descriptions-item label="HTTP状态码">{{ selectedLog.response_status }}</el-descriptions-item>
-          <el-descriptions-item label="耗时">{{ selectedLog.duration_ms }} ms</el-descriptions-item>
-          <el-descriptions-item label="时间">{{ formatDateTime(selectedLog.created_at) }}</el-descriptions-item>
-          <el-descriptions-item label="URL" :span="2">
-            <span style="word-break: break-all; font-family: monospace; font-size: 12px">{{ selectedLog.url }}</span>
-          </el-descriptions-item>
-          <el-descriptions-item v-if="selectedLog.error_message" label="错误" :span="2">
-            <span style="color: #F56C6C">{{ selectedLog.error_message }}</span>
-          </el-descriptions-item>
-        </el-descriptions>
-
-        <el-collapse v-model="activeCollapseItems">
-          <el-collapse-item title="请求头" name="req_headers">
-            <pre class="json-block">{{ formatJson(selectedLog.request_headers) }}</pre>
-          </el-collapse-item>
-          <el-collapse-item title="请求体" name="req_body">
-            <pre class="json-block">{{ formatJson(selectedLog.request_body) }}</pre>
-          </el-collapse-item>
-          <el-collapse-item title="响应内容" name="resp_body">
-            <pre class="json-block">{{ formatJson(selectedLog.response_body) }}</pre>
-          </el-collapse-item>
-        </el-collapse>
-      </div>
-    </el-drawer>
+    />
   </div>
 </template>
 
@@ -297,6 +238,8 @@ import { getReviewLogs } from '@/api/logs'
 import { formatDateTime, callLogStatusMap as logStatusMap, callTypeMap } from '@/utils/format'
 import { renderMarkdown } from '@/utils/markdown'
 import StatusTag from '@/components/common/StatusTag.vue'
+import CommentItem from '@/components/common/CommentItem.vue'
+import LogDetailDrawer from '@/components/common/LogDetailDrawer.vue'
 import 'highlight.js/styles/github-dark.css'
 
 const route = useRoute()
@@ -313,7 +256,6 @@ const selectedRevision = ref(null)
 
 const logDrawerVisible = ref(false)
 const selectedLog = ref(null)
-const activeCollapseItems = ref(['req_headers', 'req_body', 'resp_body'])
 
 const commentSeverityFilter = ref('')
 const commentFileSearch = ref('')
@@ -371,7 +313,6 @@ function formatTime(dt) {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }
 
-
 function openLogDetail(row) {
   selectedLog.value = row
   logDrawerVisible.value = true
@@ -385,21 +326,11 @@ async function handleFeedback(comment, value) {
   } catch { /* 忽略 */ }
 }
 
-function formatJson(obj) {
-  if (!obj) return '(空)'
-  try {
-    return JSON.stringify(obj, null, 2)
-  } catch {
-    return String(obj)
-  }
-}
-
 async function loadDetail() {
   loading.value = true
   try {
     const id = route.params.id
 
-    // 并行加载详情和版本列表
     const [taskData, revisionsData] = await Promise.all([
       getReview(id).catch(() => null),
       getReviewRevisions(id).catch(() => []),
@@ -414,13 +345,11 @@ async function loadDetail() {
     detail.value = taskData
     revisions.value = Array.isArray(revisionsData) ? revisionsData : []
 
-    // 默认选中最新版本
     if (revisions.value.length > 0) {
       const latest = revisions.value.reduce((a, b) => (a.revision > b.revision ? a : b))
       selectedRevision.value = latest.revision
     }
 
-    // 加载当前版本的数据
     await loadRevisionData(selectedRevision.value)
   } catch (e) {
     console.error('加载评审详情失败:', e)
@@ -432,7 +361,6 @@ async function loadDetail() {
 async function loadRevisionData(revision) {
   const id = route.params.id
   try {
-    // 对于只有 1 个版本（revision=1，无子版本）的旧记录，不传 revision 参数
     const hasMultipleRevisions = revisions.value.length > 1
     const revParam = hasMultipleRevisions ? revision : undefined
 
@@ -494,9 +422,7 @@ async function loadLogs() {
 async function handleRetry() {
   retrying.value = true
   try {
-    // 立即将状态更新为评审中
     detail.value = { ...detail.value, status: 'in_progress', error_message: null }
-    // 同步更新版本列表中对应记录的状态
     const latestRev = revisions.value.reduce((a, b) => a.revision > b.revision ? a : b, revisions.value[0])
     if (latestRev) {
       latestRev.status = 'in_progress'
@@ -506,7 +432,6 @@ async function handleRetry() {
     await retryReview(route.params.id)
     ElMessage.success('已重新提交评审任务')
   } catch (error) {
-    // 失败时回滚状态
     detail.value = { ...detail.value, status: 'failed', error_message: error.message || '重试失败' }
     ElMessage.error(error.message || '重试失败')
   } finally {
@@ -570,52 +495,6 @@ onMounted(loadDetail)
   white-space: pre-wrap;
 }
 
-.comment-item {
-  padding: 16px;
-  border: 1px solid #ebeef5;
-  border-radius: $border-radius;
-  margin-bottom: 12px;
-  transition: box-shadow 0.2s;
-
-  &:hover {
-    box-shadow: $card-shadow;
-  }
-}
-
-.comment-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 8px;
-}
-
-.comment-file {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  color: #303133;
-  font-family: monospace;
-}
-
-.comment-meta {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.line-range {
-  font-size: 12px;
-  color: #909399;
-  font-family: monospace;
-}
-
-.comment-body {
-  font-size: 14px;
-  color: #606266;
-  line-height: 1.6;
-}
-
 .md-content {
   font-size: 14px;
   line-height: 1.7;
@@ -646,34 +525,6 @@ onMounted(loadDetail)
       background: transparent;
     }
   }
-}
-
-.comment-suggestion {
-  margin-top: 10px;
-  padding: 10px 12px;
-  background: #f0f9eb;
-  border-radius: 4px;
-  font-size: 13px;
-
-  strong {
-    color: #67C23A;
-    display: block;
-    margin-bottom: 6px;
-  }
-}
-
-.json-block {
-  background: #1e1e1e;
-  color: #d4d4d4;
-  padding: 12px;
-  border-radius: 4px;
-  font-size: 12px;
-  line-height: 1.5;
-  overflow-x: auto;
-  white-space: pre-wrap;
-  word-break: break-all;
-  max-height: 400px;
-  overflow-y: auto;
 }
 
 .comment-filter-bar {

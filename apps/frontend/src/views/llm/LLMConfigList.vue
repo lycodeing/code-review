@@ -11,8 +11,8 @@
       <!-- 配置卡片展示 -->
       <el-row :gutter="16" v-loading="loading">
         <el-col :xs="24" :sm="12" :lg="8" v-for="item in configs" :key="item.id">
-          <div class="config-card">
-            <div class="config-header">
+          <ConfigCard>
+            <template #header>
               <div class="config-info">
                 <el-tag
                   :color="providerColors[item.provider] || ''"
@@ -33,36 +33,34 @@
               </div>
               <h3 class="config-name">{{ item.name }}</h3>
               <p v-if="item.description" class="config-desc">{{ item.description }}</p>
+            </template>
+
+            <div class="info-row">
+              <span class="info-label">模型</span>
+              <span class="info-value">{{ item.model_name }}</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">响应格式</span>
+              <span class="info-value">
+                <el-tag :type="responseFormatTypes[item.response_format] || ''" size="small">
+                  {{ responseFormatLabels[item.response_format] || item.response_format }}
+                </el-tag>
+              </span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">API Base</span>
+              <span class="info-value">{{ item.api_base || '-' }}</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">API Key</span>
+              <span class="info-value">{{ item.api_key || '-' }}</span>
+            </div>
+            <div v-if="item.extra_params" class="info-row">
+              <span class="info-label">额外参数</span>
+              <span class="info-value">{{ formatExtraParams(item.extra_params) }}</span>
             </div>
 
-            <div class="config-body">
-              <div class="info-row">
-                <span class="info-label">模型</span>
-                <span class="info-value">{{ item.model_name }}</span>
-              </div>
-              <div class="info-row">
-                <span class="info-label">响应格式</span>
-                <span class="info-value">
-                  <el-tag :type="getResponseFormatTagType(item.response_format)" size="small">
-                    {{ getResponseFormatLabel(item.response_format) }}
-                  </el-tag>
-                </span>
-              </div>
-              <div class="info-row">
-                <span class="info-label">API Base</span>
-                <span class="info-value">{{ item.api_base || '-' }}</span>
-              </div>
-              <div class="info-row">
-                <span class="info-label">API Key</span>
-                <span class="info-value">{{ item.api_key || '-' }}</span>
-              </div>
-              <div v-if="item.extra_params" class="info-row">
-                <span class="info-label">额外参数</span>
-                <span class="info-value">{{ formatExtraParams(item.extra_params) }}</span>
-              </div>
-            </div>
-
-            <div class="config-footer">
+            <template #footer>
               <el-button text type="primary" size="small" @click="handleQuickTest(item)" :loading="testingConfigId === item.id">
                 <el-icon><Connection /></el-icon> 测试
               </el-button>
@@ -72,8 +70,8 @@
               <el-button text type="danger" size="small" @click="handleDelete(item)">
                 <el-icon><Delete /></el-icon> 删除
               </el-button>
-            </div>
-          </div>
+            </template>
+          </ConfigCard>
         </el-col>
 
         <el-col :span="24" v-if="!loading && !configs.length">
@@ -84,11 +82,11 @@
 
     <!-- 编辑弹窗 -->
     <LLMConfigForm
-      v-if="formVisible"
-      :visible="formVisible"
-      :config="currentConfig"
-      @close="formVisible = false"
-      @saved="onSaved"
+      v-if="formDialog.visible.value"
+      :visible="formDialog.visible.value"
+      :config="formDialog.currentItem.value"
+      @close="formDialog.closeForm()"
+      @saved="formDialog.onSaved(loadData)"
     />
   </div>
 </template>
@@ -103,58 +101,15 @@ import {
   toggleLLMConfig,
   testLLMConnectionById
 } from '@/api/llmConfigs'
+import { providerColors, providerNames, responseFormatLabels, responseFormatTypes } from '@/utils/format'
+import ConfigCard from '@/components/common/ConfigCard.vue'
+import { useFormDialog } from '@/composables/useFormDialog'
 import LLMConfigForm from './LLMConfigForm.vue'
 
 const loading = ref(false)
 const configs = ref([])
-const formVisible = ref(false)
-const currentConfig = ref(null)
 const testingConfigId = ref(null)
-
-const providerColors = {
-  openai: '#10a37f',
-  anthropic: '#d4a574',
-  deepseek: '#6366f1',
-  ollama: '#000000',
-  azure: '#0078d4',
-  bedrock: '#232f3e',
-  dashscope: '#ff6a00'
-}
-
-const providerNames = {
-  openai: 'OpenAI',
-  anthropic: 'Anthropic',
-  deepseek: 'DeepSeek',
-  ollama: 'Ollama',
-  azure: 'Azure',
-  bedrock: 'AWS Bedrock',
-  dashscope: 'Dashscope (阿里云)',
-  zhipu: '智谱 AI (Zhipu)'
-}
-
-const responseFormatLabels = {
-  auto: '自动检测',
-  json: 'JSON',
-  anthropic_thinking: 'Anthropic Thinking',
-  xml: 'XML',
-  plain_text: '纯文本'
-}
-
-const responseFormatTypes = {
-  auto: 'info',
-  json: 'success',
-  anthropic_thinking: 'warning',
-  xml: '',
-  plain_text: 'info'
-}
-
-function getResponseFormatLabel(format) {
-  return responseFormatLabels[format] || format
-}
-
-function getResponseFormatTagType(format) {
-  return responseFormatTypes[format] || ''
-}
+const formDialog = useFormDialog()
 
 async function loadData() {
   loading.value = true
@@ -172,8 +127,7 @@ function formatExtraParams(params) {
 }
 
 function openForm(config = null) {
-  currentConfig.value = config
-  formVisible.value = true
+  formDialog.openForm(config)
 }
 
 async function toggleEnabled(item, val) {
@@ -213,11 +167,6 @@ async function handleDelete(item) {
   } catch { /* 已处理 */ }
 }
 
-function onSaved() {
-  formVisible.value = false
-  loadData()
-}
-
 onMounted(loadData)
 </script>
 
@@ -226,24 +175,6 @@ onMounted(loadData)
   font-size: 16px;
   font-weight: 600;
   color: #303133;
-}
-
-.config-card {
-  background: $card-bg;
-  border: 1px solid #ebeef5;
-  border-radius: $border-radius;
-  margin-bottom: 16px;
-  transition: box-shadow 0.2s;
-  overflow: hidden;
-
-  &:hover {
-    box-shadow: $card-shadow;
-  }
-}
-
-.config-header {
-  padding: 16px 20px 12px;
-  border-bottom: 1px solid #f0f0f0;
 }
 
 .config-info {
@@ -265,10 +196,6 @@ onMounted(loadData)
   margin: 4px 0 0;
 }
 
-.config-body {
-  padding: 12px 20px;
-}
-
 .info-row {
   display: flex;
   justify-content: space-between;
@@ -288,14 +215,5 @@ onMounted(loadData)
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.config-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 4px;
-  padding: 8px 12px;
-  border-top: 1px solid #f0f0f0;
-  background: #fafafa;
 }
 </style>

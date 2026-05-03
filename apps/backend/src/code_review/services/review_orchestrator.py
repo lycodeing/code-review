@@ -4,19 +4,22 @@
 """
 
 import logging
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from fnmatch import fnmatch
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from code_review.adapters.factory import create_adapter
-from code_review.core.llm import ReviewResult
+from code_review.core.llm import ReviewComment, ReviewResult
 from code_review.core.notification import NotificationPayload
 from code_review.core.platform import (
     CommentPosition,
     FileChange,
+    MRInfo,
+    PlatformAdapter,
     PublishComment,
     WebhookEvent,
 )
@@ -31,10 +34,25 @@ from code_review.models.db import ReviewComment as ReviewCommentDB
 from code_review.services.comment_aggregator import CommentAggregator
 from code_review.services.llm_config_service import LLMConfigService
 from code_review.services.platform_config_service import PlatformConfigService
-from code_review.services.prompt_template_service import PromptTemplateService, seed_default_templates
+from code_review.services.prompt_template_service import (
+    PromptTemplateService,
+    seed_default_templates,
+)
 from code_review.services.rule_engine import check_changes_against_rules, get_rules_for_project
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class ReviewContext:
+    """评审上下文 — 由 _prepare_review_context 返回的聚合数据。"""
+
+    adapter: PlatformAdapter
+    mr_info: MRInfo
+    filtered_changes: list[FileChange]
+    combined_diff: str
+    related_context: dict[str, str]
+    settings_svc: Any  # SystemSettingsService（lazy import，用 Any 避免循环依赖）
 
 
 class ReviewOrchestrator:
@@ -321,7 +339,10 @@ class ReviewOrchestrator:
         return task
 
     async def execute_review(self, task_id: str) -> None:
-        """执行完整的评审流程。"""
+        """执行完整的评审流程。
+
+        编排调度器：依次调用各阶段私有方法，保持事务一致性。
+        """
         self._ensure_engine()
         async with self._session_factory() as session:
             task = await session.get(ReviewTask, UUID(task_id))
@@ -330,319 +351,57 @@ class ReviewOrchestrator:
                 return
 
             try:
-                # 执行前检查任务是否已被取消（新评审到来时会取消旧版本）
                 if task.status == ReviewTask.Status.CANCELLED:
                     logger.info("任务已被取消，跳过执行: %s", task_id)
                     return
 
-                # 更新状态为评审中
                 task.status = ReviewTask.Status.IN_PROGRESS
                 task.started_at = now_cst()
                 await session.commit()
 
-                # 获取项目配置
                 project = await session.get(Project, task.project_id)
                 if not project:
                     raise ValueError(f"Project not found: {task.project_id}")
 
-                # 从 DB 获取平台配置（env 降级）
-                platform_config = await self._get_platform_config(project.platform)
-                if not platform_config:
-                    raise ValueError(f"No platform config for: {project.platform}")
-
-                # 创建平台适配器
-                adapter = create_adapter(
-                    platform=project.platform,
-                    platform_config=platform_config,
-                    project_webhook_secret=project.webhook_secret or "",
-                )
-
-                # 获取 MR 信息
-                mr_info = await adapter.get_mr_info(
-                    project.platform_project_id, task.mr_iid
-                )
-                task.mr_title = mr_info.title
-                task.mr_author = mr_info.author
-                task.mr_url = mr_info.web_url or mr_info.url
-                task.source_branch = mr_info.source_branch
-                task.target_branch = mr_info.target_branch
-
-                # 获取变更文件列表
-                changes = await adapter.get_mr_changes(
-                    project.platform_project_id, task.mr_iid
-                )
-
-                # 文件过滤
-                filtered_changes = self._filter_files(
-                    changes, project.config or {}
-                )
-
-                if not filtered_changes:
+                ctx = await self._prepare_review_context(session, task, project)
+                if not ctx.filtered_changes:
                     task.status = ReviewTask.Status.COMPLETED
                     task.summary = "No reviewable files found after filtering."
                     task.completed_at = now_cst()
                     await session.commit()
                     return
 
-                # 合并 diff
-                combined_diff = self._combine_diffs(filtered_changes)
+                rule_comments = await self._execute_rule_engine(
+                    session, task, ctx.filtered_changes,
+                )
+                prompt = await self._resolve_prompt(
+                    session, task, project, ctx.filtered_changes,
+                )
+                candidates = await self._build_llm_candidates(session, task)
+                result = await self._call_llm(
+                    task, ctx.combined_diff, ctx.filtered_changes,
+                    prompt, candidates, ctx.settings_svc,
+                    ctx.related_context,
+                )
 
-                # 系统配置服务（后续多处使用）
-                from code_review.services.system_settings_service import SystemSettingsService
-                settings_svc = SystemSettingsService(session)
-
-                # 上下文增强：加载 diff 中引用的相关文件
-                related_context: dict[str, str] = {}
-                ctx_enabled = await settings_svc.get_bool("context_enhancement_enabled", True)
-                if ctx_enabled:
-                    from code_review.services.context_extractor import ContextExtractor
-                    ctx_extractor = ContextExtractor()
-                    max_ctx_files = await settings_svc.get_int("context_max_files", 5)
-                    max_ctx_size = await settings_svc.get_int("context_max_file_size", 10000)
-                    related_context = await ctx_extractor.extract_context(
-                        adapter=adapter,
-                        project_id=project.platform_project_id,
-                        changes=filtered_changes,
-                        source_branch=task.source_branch or "main",
-                        max_files=max_ctx_files,
-                        max_file_size=max_ctx_size,
-                    )
-
-                # 执行规则引擎（确定性检查，在 LLM 评审前执行）
-                rules = await get_rules_for_project(session, task.project_id)
-                rule_comments = check_changes_against_rules(filtered_changes, rules)
-
-                # 选择 prompt 模板（从数据库动态加载，支持热更新）
-                languages = {
-                    self._prompt_manager.detect_language(c.path)
-                    for c in filtered_changes
-                }
-                # 使用最主要的语言模板（或 default）
-                main_language = max(languages, key=lambda l: sum(
-                    1 for c in filtered_changes
-                    if self._prompt_manager.detect_language(c.path) == l
-                )) if languages else "default"
-
-                # 优先级：项目绑定模板 > 项目 config 指定名称 > 按分类自动匹配
-                prompt = None
-                prompt_svc = PromptTemplateService(session)
-                # 1. 尝试从项目绑定获取模板
-                bound_tpl = await prompt_svc.get_template_for_project(task.project_id)
-                if bound_tpl:
-                    logger.info(f"使用项目绑定的模板: {bound_tpl.name}")
-                    prompt = bound_tpl.content
-                else:
-                    # 2. 尝试从项目 config 中指定的模板名称
-                    project_template_name = (
-                        (project.config or {}).get("prompt_template_name")
-                    )
-                    # 3. 按分类自动匹配
-                    prompt = await self._prompt_manager.get_template(
-                        session=session,
-                        language=main_language,
-                        template_name=project_template_name,
-                    )
-
-                # 获取项目的 LLM 配置链（按优先级排序，用于故障转移）
-                llm_config_service = LLMConfigService(session, self._secret_key)
-                llm_config_chain = await llm_config_service.get_llm_configs_chain(task.project_id)
-
-                logger.debug("项目 %s 的 LLM 配置链: %s", task.project_id, [c.name for c in llm_config_chain])
-
-                # 从系统配置获取 LLM 超时时间
-                llm_timeout = await settings_svc.get_int("llm_timeout_seconds", 120)
-                llm_timeout_value = None if llm_timeout == -1 else llm_timeout
-
-                # 构造 LLM 配置候选列表
-                llm_candidates: list[tuple[str, LLMConfig]] = []
-                for llm_config in llm_config_chain:
-                    api_key = await llm_config_service.decrypt_api_key(llm_config.api_key)
-                    llm_settings = LLMConfig(
-                        model=llm_config.model_name,
-                        api_key=api_key,
-                        api_base=llm_config.api_base or "",
-                        temperature=llm_config.extra_params.get("temperature", 0.3) if llm_config.extra_params else 0.3,
-                        max_tokens=llm_config.extra_params.get("max_tokens", 4096) if llm_config.extra_params else 4096,
-                        timeout=llm_config.extra_params.get("timeout", llm_timeout_value) if llm_config.extra_params else llm_timeout_value,
-                        response_format=llm_config.response_format or "auto",
-                        extra_params=llm_config.extra_params,
-                    )
-                    llm_candidates.append((llm_config.name, llm_settings))
-
-                # 无数据库配置时，降级到环境变量
-                if not llm_candidates:
-                    env_llm = self._config.llm
-                    env_llm.timeout = llm_timeout_value if llm_timeout_value is not None else env_llm.timeout
-                    llm_candidates.append(("env_default", env_llm))
-                    logger.info("无数据库 LLM 配置，降级到环境变量, model=%r", self._config.llm.model)
-
-                # 按优先级尝试 LLM 调用，失败则自动降级到下一个
-                result: ReviewResult | None = None
-                last_error: Exception | None = None
-                tried_configs: list[str] = []
-
-                # 读取评审模式
-                agent_mode = await settings_svc.get_string("agent_mode", "single")
-
-                if agent_mode == "multi":
-                    import json
-                    from code_review.core.agent_profile import AgentProfile
-                    from code_review.services.multi_agent_reviewer import MultiAgentReviewer
-
-                    profiles_json = await settings_svc.get_string(
-                        "agent_profiles",
-                        '[{"name":"security","focus":"安全漏洞、敏感信息泄露、注入风险","severity":"critical"},'
-                        '{"name":"performance","focus":"性能瓶颈、资源泄漏、N+1 查询","severity":"warning"},'
-                        '{"name":"quality","focus":"代码风格、可维护性、命名规范、重复代码","severity":"suggestion"}]',
-                    )
-                    try:
-                        profiles_data = json.loads(profiles_json)
-                        profiles = [AgentProfile(**p) for p in profiles_data]
-                    except (json.JSONDecodeError, TypeError) as e:
-                        logger.warning("Agent profiles JSON 解析失败，降级到单 Agent: %s", e)
-                        agent_mode = "single"
-                        profiles = []
-
-                    if profiles:
-                        reviewer = MultiAgentReviewer(profiles)
-                        result = await reviewer.review(
-                            diff=combined_diff,
-                            files=filtered_changes,
-                            base_template=prompt,
-                            llm_candidates=llm_candidates,
-                            task_id=task.id,
-                            session_factory=self._session_factory,
-                            project_id=task.project_id,
-                        )
-                        task.model_name = "multi-agent"
-                        task.agent_mode = "multi"
-                        logger.info("多 Agent 评审完成: %d 个 Agent, %d 条评论",
-                                    len(profiles), len(result.comments))
-
-                if agent_mode == "single" or result is None:
-                    task.agent_mode = "single"
-                    for config_name, llm_settings in llm_candidates:
-                        try:
-                            logger.info("尝试 LLM 配置: %s, model=%s", config_name, llm_settings.model)
-                            reviewer = LangChainReviewer(llm_settings)
-                            result = await reviewer.review(
-                                diff=combined_diff,
-                                files=filtered_changes,
-                                prompt_template=prompt,
-                                task_id=task.id,
-                                session_factory=self._session_factory,
-                                related_context=related_context if related_context else None,
-                                project_id=task.project_id,
-                            )
-                            task.model_name = result.model
-                            logger.info("LLM 配置 %s 评审成功, model=%s", config_name, result.model)
-                            break
-                        except Exception as e:
-                            tried_configs.append(config_name)
-                            last_error = e
-                            logger.warning(
-                                "LLM 配置 %s (model=%s) 调用失败: %s",
-                                config_name, llm_settings.model, e,
-                            )
-                            if len(llm_candidates) > 1:
-                                logger.info("尝试故障转移到下一个 LLM 配置...")
-                            continue
-
-                if result is None:
-                    raise RuntimeError(
-                        f"所有 LLM 配置均失败（已尝试: {', '.join(tried_configs)}）: {last_error}"
-                    )
-
-                # LLM 调用完成后再次检查是否被取消（LLM 调用耗时最长，期间可能有新评审到来）
+                # LLM 调用完成后再次检查是否被取消
                 await session.refresh(task)
                 if task.status == ReviewTask.Status.CANCELLED:
                     logger.info("任务在 LLM 调用期间被取消，跳过后续处理: %s", task_id)
                     return
 
-                # 合并规则引擎评论和 LLM 评论
                 if rule_comments:
-                    logger.info("规则引擎命中 %d 条，LLM 评论 %d 条", len(rule_comments), len(result.comments))
+                    logger.info(
+                        "规则引擎命中 %d 条，LLM 评论 %d 条",
+                        len(rule_comments), len(result.comments),
+                    )
                     result.comments.extend(rule_comments)
 
-                # 聚合评论
-                aggregated, summary = self._aggregator.aggregate(result.comments)
-                task.summary = summary or result.summary
-                task.total_comments = len(result.comments)
-                task.critical_count = sum(
-                    1 for c in result.comments if c.severity.value == "critical"
+                await self._publish_results(
+                    session, task, result, ctx.filtered_changes,
+                    ctx.adapter, project, ctx.settings_svc,
                 )
-                task.warning_count = sum(
-                    1 for c in result.comments if c.severity.value == "warning"
-                )
-
-                # 发布评论到平台
-                publish_comments = self._to_publish_comments(aggregated)
-                if publish_comments:
-                    await adapter.publish_comments_batch(
-                        project.platform_project_id,
-                        task.mr_iid,
-                        publish_comments,
-                    )
-
-                # 生成并发布 PR 摘要
-                pr_desc_enabled = await settings_svc.get_bool("pr_description_enabled", True)
-                if pr_desc_enabled and task.summary:
-                    pr_desc_mode = await settings_svc.get_string("pr_description_mode", "full")
-                    pr_description = self._build_pr_description(
-                        task, result.comments, filtered_changes, mode=pr_desc_mode,
-                    )
-                    try:
-                        await adapter.publish_comment(
-                            project.platform_project_id,
-                            task.mr_iid,
-                            PublishComment(body=pr_description, position=None),
-                        )
-                        task.pr_description = pr_description
-                        task.description_posted = True
-                        logger.info("PR 摘要已发布: task=%s", task_id)
-                    except Exception as e:
-                        logger.warning("PR 摘要发布失败（不影响评审结果）: %s", e)
-
-                # 保存评审意见到数据库
-                for comment in result.comments:
-                    db_comment = ReviewCommentDB(
-                        task_id=task.id,
-                        file_path=comment.file_path,
-                        line_start=comment.line_start,
-                        line_end=comment.line_end,
-                        severity=comment.severity.value,
-                        message=comment.message,
-                        suggestion=comment.suggestion,
-                    )
-                    session.add(db_comment)
-
-                # 发送通知（使用平台绑定的通知渠道）
-                await self._init_notification_channels(platform=project.platform)
-                notification_payload = NotificationPayload(
-                    mr_title=mr_info.title,
-                    mr_author=mr_info.author,
-                    mr_url=mr_info.web_url or mr_info.url,
-                    project_name=project.name,
-                    summary=task.summary or "",
-                    critical_count=task.critical_count or 0,
-                    warning_count=task.warning_count or 0,
-                    suggestion_count=sum(
-                        1 for c in result.comments
-                        if c.severity.value == "suggestion"
-                    ),
-                    info_count=sum(
-                        1 for c in result.comments
-                        if c.severity.value == "info"
-                    ),
-                    detail_link=mr_info.web_url or mr_info.url,
-                )
-                await self._notification_manager.notify_all(
-                    notification_payload,
-                    project_id=task.project_id,
-                    task_id=task.id,
-                    session_factory=self._session_factory,
-                    project_config=project.config,
-                )
+                await self._send_notifications(task, ctx.mr_info, project, result)
 
                 task.status = ReviewTask.Status.COMPLETED
                 task.completed_at = now_cst()
@@ -659,6 +418,334 @@ class ReviewOrchestrator:
                 task.error_message = str(e)
                 task.completed_at = now_cst()
                 await session.commit()
+
+    # ------------------------------------------------------------------
+    # 评审流水线各阶段（由 execute_review 依次调用）
+    # ------------------------------------------------------------------
+
+    async def _prepare_review_context(
+        self, session: AsyncSession, task: ReviewTask, project: Project,
+    ) -> ReviewContext:
+        """阶段 1：获取平台配置、创建适配器、拉取 MR 信息和变更文件。"""
+        from code_review.services.system_settings_service import SystemSettingsService
+
+        platform_config = await self._get_platform_config(project.platform)
+        if not platform_config:
+            raise ValueError(f"No platform config for: {project.platform}")
+
+        adapter = create_adapter(
+            platform=project.platform,
+            platform_config=platform_config,
+            project_webhook_secret=project.webhook_secret or "",
+        )
+
+        mr_info = await adapter.get_mr_info(project.platform_project_id, task.mr_iid)
+        task.mr_title = mr_info.title
+        task.mr_author = mr_info.author
+        task.mr_url = mr_info.web_url or mr_info.url
+        task.source_branch = mr_info.source_branch
+        task.target_branch = mr_info.target_branch
+
+        changes = await adapter.get_mr_changes(
+            project.platform_project_id, task.mr_iid,
+        )
+        filtered_changes = self._filter_files(changes, project.config or {})
+        combined_diff = self._combine_diffs(filtered_changes)
+
+        settings_svc = SystemSettingsService(session)
+
+        # 上下文增强
+        related_context: dict[str, str] = {}
+        ctx_enabled = await settings_svc.get_bool("context_enhancement_enabled", True)
+        if ctx_enabled:
+            from code_review.services.context_extractor import ContextExtractor
+
+            ctx_extractor = ContextExtractor()
+            max_ctx_files = await settings_svc.get_int("context_max_files", 5)
+            max_ctx_size = await settings_svc.get_int("context_max_file_size", 10000)
+            related_context = await ctx_extractor.extract_context(
+                adapter=adapter,
+                project_id=project.platform_project_id,
+                changes=filtered_changes,
+                source_branch=task.source_branch or "main",
+                max_files=max_ctx_files,
+                max_file_size=max_ctx_size,
+            )
+
+        return ReviewContext(
+            adapter=adapter,
+            mr_info=mr_info,
+            filtered_changes=filtered_changes,
+            combined_diff=combined_diff,
+            related_context=related_context,
+            settings_svc=settings_svc,
+        )
+
+    async def _execute_rule_engine(
+        self, session: AsyncSession, task: ReviewTask, changes: list[FileChange],
+    ) -> list[ReviewComment]:
+        """阶段 2：执行确定性规则检查。"""
+        rules = await get_rules_for_project(session, task.project_id)
+        return check_changes_against_rules(changes, rules)
+
+    async def _resolve_prompt(
+        self,
+        session: AsyncSession,
+        task: ReviewTask,
+        project: Project,
+        changes: list[FileChange],
+    ) -> str:
+        """阶段 3：解析 Prompt 模板（项目绑定 > config 名称 > 自动匹配）。"""
+        languages = {
+            self._prompt_manager.detect_language(c.path)
+            for c in changes
+        }
+        main_language = max(
+            languages,
+            key=lambda lang: sum(
+                1 for c in changes
+                if self._prompt_manager.detect_language(c.path) == lang
+            ),
+        ) if languages else "default"
+
+        prompt_svc = PromptTemplateService(session)
+        bound_tpl = await prompt_svc.get_template_for_project(task.project_id)
+        if bound_tpl:
+            logger.info("使用项目绑定的模板: %s", bound_tpl.name)
+            return bound_tpl.content
+
+        project_template_name = (project.config or {}).get("prompt_template_name")
+        return await self._prompt_manager.get_template(
+            session=session,
+            language=main_language,
+            template_name=project_template_name,
+        )
+
+    async def _build_llm_candidates(
+        self, session: AsyncSession, task: ReviewTask,
+    ) -> list[tuple[str, LLMConfig]]:
+        """阶段 4：构造 LLM 配置候选链（含 env 降级）。"""
+        from code_review.services.system_settings_service import SystemSettingsService
+
+        settings_svc = SystemSettingsService(session)
+        llm_config_service = LLMConfigService(session, self._secret_key)
+        llm_config_chain = await llm_config_service.get_llm_configs_chain(task.project_id)
+
+        logger.debug(
+            "项目 %s 的 LLM 配置链: %s",
+            task.project_id, [c.name for c in llm_config_chain],
+        )
+
+        llm_timeout = await settings_svc.get_int("llm_timeout_seconds", 120)
+        llm_timeout_value = None if llm_timeout == -1 else llm_timeout
+
+        candidates: list[tuple[str, LLMConfig]] = []
+        for llm_config in llm_config_chain:
+            api_key = await llm_config_service.decrypt_api_key(llm_config.api_key)
+            candidates.append((
+                llm_config.name,
+                LLMConfig(
+                    model=llm_config.model_name,
+                    api_key=api_key,
+                    api_base=llm_config.api_base or "",
+                    temperature=llm_config.extra_params.get("temperature", 0.3) if llm_config.extra_params else 0.3,
+                    max_tokens=llm_config.extra_params.get("max_tokens", 4096) if llm_config.extra_params else 4096,
+                    timeout=llm_config.extra_params.get("timeout", llm_timeout_value) if llm_config.extra_params else llm_timeout_value,
+                    response_format=llm_config.response_format or "auto",
+                    extra_params=llm_config.extra_params,
+                ),
+            ))
+
+        if not candidates:
+            env_llm = self._config.llm
+            env_llm.timeout = llm_timeout_value if llm_timeout_value is not None else env_llm.timeout
+            candidates.append(("env_default", env_llm))
+            logger.info("无数据库 LLM 配置，降级到环境变量, model=%r", self._config.llm.model)
+
+        return candidates
+
+    async def _call_llm(
+        self,
+        task: ReviewTask,
+        diff: str,
+        files: list[FileChange],
+        prompt: str,
+        candidates: list[tuple[str, LLMConfig]],
+        settings_svc: Any,
+        related_context: dict[str, str] | None = None,
+    ) -> ReviewResult:
+        """阶段 5：执行 LLM 评审（多 Agent / 单 Agent + 故障转移）。"""
+        result: ReviewResult | None = None
+        last_error: Exception | None = None
+        tried_configs: list[str] = []
+
+        agent_mode = await settings_svc.get_string("agent_mode", "single")
+
+        if agent_mode == "multi":
+            import json
+
+            from code_review.core.agent_profile import AgentProfile
+            from code_review.services.multi_agent_reviewer import MultiAgentReviewer
+
+            profiles_json = await settings_svc.get_string(
+                "agent_profiles",
+                '[{"name":"security","focus":"安全漏洞、敏感信息泄露、注入风险","severity":"critical"},'
+                '{"name":"performance","focus":"性能瓶颈、资源泄漏、N+1 查询","severity":"warning"},'
+                '{"name":"quality","focus":"代码风格、可维护性、命名规范、重复代码","severity":"suggestion"}]',
+            )
+            try:
+                profiles_data = json.loads(profiles_json)
+                profiles = [AgentProfile(**p) for p in profiles_data]
+            except (json.JSONDecodeError, TypeError) as e:
+                logger.warning("Agent profiles JSON 解析失败，降级到单 Agent: %s", e)
+                agent_mode = "single"
+                profiles = []
+
+            if profiles:
+                reviewer = MultiAgentReviewer(profiles)
+                result = await reviewer.review(
+                    diff=diff,
+                    files=files,
+                    base_template=prompt,
+                    llm_candidates=candidates,
+                    task_id=task.id,
+                    session_factory=self._session_factory,
+                    project_id=task.project_id,
+                )
+                task.model_name = "multi-agent"
+                task.agent_mode = "multi"
+                logger.info(
+                    "多 Agent 评审完成: %d 个 Agent, %d 条评论",
+                    len(profiles), len(result.comments),
+                )
+
+        if agent_mode == "single" or result is None:
+            task.agent_mode = "single"
+            for config_name, llm_settings in candidates:
+                try:
+                    logger.info("尝试 LLM 配置: %s, model=%s", config_name, llm_settings.model)
+                    reviewer = LangChainReviewer(llm_settings)
+                    result = await reviewer.review(
+                        diff=diff,
+                        files=files,
+                        prompt_template=prompt,
+                        task_id=task.id,
+                        session_factory=self._session_factory,
+                        related_context=related_context if related_context else None,
+                        project_id=task.project_id,
+                    )
+                    task.model_name = result.model
+                    logger.info("LLM 配置 %s 评审成功, model=%s", config_name, result.model)
+                    break
+                except Exception as e:
+                    tried_configs.append(config_name)
+                    last_error = e
+                    logger.warning(
+                        "LLM 配置 %s (model=%s) 调用失败: %s",
+                        config_name, llm_settings.model, e,
+                    )
+                    if len(candidates) > 1:
+                        logger.info("尝试故障转移到下一个 LLM 配置...")
+                    continue
+
+        if result is None:
+            raise RuntimeError(
+                f"所有 LLM 配置均失败（已尝试: {', '.join(tried_configs)}）: {last_error}"
+            )
+
+        return result
+
+    async def _publish_results(
+        self,
+        session: AsyncSession,
+        task: ReviewTask,
+        result: ReviewResult,
+        changes: list[FileChange],
+        adapter: PlatformAdapter,
+        project: Project,
+        settings_svc: Any,
+    ) -> None:
+        """阶段 6：聚合评论、发布到平台、保存 DB 记录。"""
+        aggregated, summary = self._aggregator.aggregate(result.comments)
+        task.summary = summary or result.summary
+        task.total_comments = len(result.comments)
+        task.critical_count = sum(
+            1 for c in result.comments if c.severity.value == "critical"
+        )
+        task.warning_count = sum(
+            1 for c in result.comments if c.severity.value == "warning"
+        )
+
+        # 发布行内评论
+        publish_comments = self._to_publish_comments(aggregated)
+        if publish_comments:
+            await adapter.publish_comments_batch(
+                project.platform_project_id, task.mr_iid, publish_comments,
+            )
+
+        # 生成并发布 PR 摘要
+        pr_desc_enabled = await settings_svc.get_bool("pr_description_enabled", True)
+        if pr_desc_enabled and task.summary:
+            pr_desc_mode = await settings_svc.get_string("pr_description_mode", "full")
+            pr_description = self._build_pr_description(
+                task, result.comments, changes, mode=pr_desc_mode,
+            )
+            try:
+                await adapter.publish_comment(
+                    project.platform_project_id,
+                    task.mr_iid,
+                    PublishComment(body=pr_description, position=None),
+                )
+                task.pr_description = pr_description
+                task.description_posted = True
+                logger.info("PR 摘要已发布: task=%s", task.id)
+            except Exception as e:
+                logger.warning("PR 摘要发布失败（不影响评审结果）: %s", e)
+
+        # 保存评论到数据库
+        for comment in result.comments:
+            session.add(ReviewCommentDB(
+                task_id=task.id,
+                file_path=comment.file_path,
+                line_start=comment.line_start,
+                line_end=comment.line_end,
+                severity=comment.severity.value,
+                message=comment.message,
+                suggestion=comment.suggestion,
+            ))
+
+    async def _send_notifications(
+        self,
+        task: ReviewTask,
+        mr_info: MRInfo,
+        project: Project,
+        result: ReviewResult,
+    ) -> None:
+        """阶段 7：初始化渠道并发送通知。"""
+        await self._init_notification_channels(platform=project.platform)
+        notification_payload = NotificationPayload(
+            mr_title=mr_info.title,
+            mr_author=mr_info.author,
+            mr_url=mr_info.web_url or mr_info.url,
+            project_name=project.name,
+            summary=task.summary or "",
+            critical_count=task.critical_count or 0,
+            warning_count=task.warning_count or 0,
+            suggestion_count=sum(
+                1 for c in result.comments if c.severity.value == "suggestion"
+            ),
+            info_count=sum(
+                1 for c in result.comments if c.severity.value == "info"
+            ),
+            detail_link=mr_info.web_url or mr_info.url,
+        )
+        await self._notification_manager.notify_all(
+            notification_payload,
+            project_id=task.project_id,
+            task_id=task.id,
+            session_factory=self._session_factory,
+            project_config=project.config,
+        )
 
     async def _find_project(
         self, session: AsyncSession, event: WebhookEvent

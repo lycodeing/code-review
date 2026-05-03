@@ -115,130 +115,54 @@
     </div>
 
     <!-- 详情抽屉 -->
-    <el-drawer
-      v-model="drawerVisible"
-      title="调用详情"
-      size="620px"
-      direction="rtl"
-    >
-      <div v-if="selectedLog">
-        <el-descriptions :column="2" border size="small" style="margin-bottom: 16px">
-          <el-descriptions-item label="类型">
-            <el-tag :type="callTypeMap[selectedLog.call_type]?.type || 'info'" size="small">
-              {{ callTypeMap[selectedLog.call_type]?.label || selectedLog.call_type }}
-            </el-tag>
-          </el-descriptions-item>
-          <el-descriptions-item label="提供商">{{ selectedLog.provider }}</el-descriptions-item>
-          <el-descriptions-item label="结果">
-            <el-tag :type="callLogStatusMap[selectedLog.status]?.type || 'info'" size="small">
-              {{ callLogStatusMap[selectedLog.status]?.label || selectedLog.status }}
-            </el-tag>
-          </el-descriptions-item>
-          <el-descriptions-item label="HTTP状态码">{{ selectedLog.response_status ?? '-' }}</el-descriptions-item>
-          <el-descriptions-item label="耗时">{{ selectedLog.duration_ms }} ms</el-descriptions-item>
-          <el-descriptions-item label="时间">{{ formatDateTime(selectedLog.created_at) }}</el-descriptions-item>
-          <el-descriptions-item label="URL" :span="2">
-            <span style="word-break: break-all; font-family: monospace; font-size: 12px">
-              {{ selectedLog.url || '-' }}
-            </span>
-          </el-descriptions-item>
-          <el-descriptions-item v-if="selectedLog.error_message" label="错误信息" :span="2">
-            <span style="color: #F56C6C; white-space: pre-wrap">{{ selectedLog.error_message }}</span>
-          </el-descriptions-item>
-        </el-descriptions>
-
-        <el-collapse v-model="activeItems" style="margin-top: 8px">
-          <el-collapse-item title="请求头" name="req_headers">
-            <pre class="json-block">{{ formatJson(selectedLog.request_headers) }}</pre>
-          </el-collapse-item>
-          <el-collapse-item title="请求体" name="req_body">
-            <pre class="json-block">{{ formatJson(selectedLog.request_body) }}</pre>
-          </el-collapse-item>
-          <el-collapse-item title="响应内容" name="resp_body">
-            <pre class="json-block">{{ formatJson(selectedLog.response_body) }}</pre>
-          </el-collapse-item>
-        </el-collapse>
-      </div>
-    </el-drawer>
+    <LogDetailDrawer
+      v-model:visible="drawerVisible"
+      :log="selectedLog"
+    />
   </div>
 </template>
 
 <script setup>
 import { ref, onMounted } from 'vue'
-import { ElMessage } from 'element-plus'
 import { Search, Refresh, Loading } from '@element-plus/icons-vue'
 import { getApiCallLogs } from '@/api/logs'
 import { formatDateTime, callLogStatusMap, callTypeMap } from '@/utils/format'
+import { useTable } from '@/composables/useTable'
+import LogDetailDrawer from '@/components/common/LogDetailDrawer.vue'
 
-const loading = ref(false)
-const tableData = ref([])
-const total = ref(0)
-const pagination = ref({ page: 1, pageSize: 20 })
 const filters = ref({ call_type: '', status: '', provider: '' })
+
+const { loading, tableData, total, pagination, loadData, handlePageChange, handleSizeChange, resetPagination } = useTable(getApiCallLogs)
 
 // 详情抽屉
 const drawerVisible = ref(false)
 const selectedLog = ref(null)
-const activeItems = ref(['req_headers', 'req_body', 'resp_body'])
 
 function openDetail(row) {
   selectedLog.value = row
   drawerVisible.value = true
 }
 
-function formatJson(obj) {
-  if (!obj) return '(空)'
-  try {
-    return JSON.stringify(obj, null, 2)
-  } catch {
-    return String(obj)
-  }
+function buildFilterParams() {
+  const params = {}
+  if (filters.value.call_type) params.call_type = filters.value.call_type
+  if (filters.value.status) params.status = filters.value.status
+  if (filters.value.provider) params.provider = filters.value.provider
+  return params
 }
 
-async function loadLogs() {
-  loading.value = true
-  try {
-    const params = {
-      offset: (pagination.value.page - 1) * pagination.value.pageSize,
-      limit: pagination.value.pageSize,
-    }
-    if (filters.value.call_type) params.call_type = filters.value.call_type
-    if (filters.value.status) params.status = filters.value.status
-    if (filters.value.provider) params.provider = filters.value.provider
-
-    const data = await getApiCallLogs(params)
-    tableData.value = Array.isArray(data.items) ? data.items : []
-    total.value = data.total ?? 0
-  } catch (error) {
-    ElMessage.error(error.message || '加载失败')
-  } finally {
-    loading.value = false
-  }
-}
-
-function doSearch() {
-  pagination.value.page = 1
-  loadLogs()
+async function doSearch() {
+  resetPagination()
+  loadData(buildFilterParams())
 }
 
 function resetFilters() {
   filters.value = { call_type: '', status: '', provider: '' }
-  pagination.value.page = 1
-  loadLogs()
+  resetPagination()
+  loadData()
 }
 
-function handlePageChange(page) {
-  pagination.value.page = page
-  loadLogs()
-}
-
-function handleSizeChange(size) {
-  pagination.value.pageSize = size
-  pagination.value.page = 1
-  loadLogs()
-}
-
-onMounted(loadLogs)
+onMounted(() => loadData())
 </script>
 
 <style lang="scss" scoped>
@@ -258,19 +182,5 @@ onMounted(loadLogs)
   display: flex;
   justify-content: flex-end;
   margin-top: 16px;
-}
-
-.json-block {
-  background: #1e1e1e;
-  color: #d4d4d4;
-  padding: 12px;
-  border-radius: 4px;
-  font-size: 12px;
-  line-height: 1.5;
-  overflow-x: auto;
-  white-space: pre-wrap;
-  word-break: break-all;
-  max-height: 420px;
-  overflow-y: auto;
 }
 </style>

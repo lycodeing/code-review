@@ -11,11 +11,11 @@
       <!-- 通知渠道卡片 -->
       <el-row :gutter="16" v-loading="loading">
         <el-col :xs="24" :sm="12" :lg="8" v-for="item in notifications" :key="item.channel">
-          <div class="notify-card">
-            <div class="notify-header">
+          <ConfigCard>
+            <template #header>
               <div class="notify-info">
-                <el-icon :size="24" :color="channelIcon[item.channel]?.color || '#409EFF'">
-                  <component :is="channelIcon[item.channel]?.icon || 'Bell'" />
+                <el-icon :size="24" :color="channelIcons[item.channel]?.color || '#409EFF'">
+                  <component :is="channelIcons[item.channel]?.icon || 'Bell'" />
                 </el-icon>
                 <span class="channel-name">{{ channelNames[item.channel] || item.channel }}</span>
                 <el-switch
@@ -25,24 +25,22 @@
                 />
               </div>
               <p v-if="item.description" class="notify-desc">{{ item.description }}</p>
+            </template>
+
+            <div class="info-row">
+              <span class="info-label">Webhook URL</span>
+              <span class="info-value">{{ item.webhook_url || '-' }}</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">Secret</span>
+              <span class="info-value">{{ item.secret || '-' }}</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">@手机号</span>
+              <span class="info-value">{{ item.at_mobiles || '-' }}</span>
             </div>
 
-            <div class="notify-body">
-              <div class="info-row">
-                <span class="info-label">Webhook URL</span>
-                <span class="info-value">{{ item.webhook_url || '-' }}</span>
-              </div>
-              <div class="info-row">
-                <span class="info-label">Secret</span>
-                <span class="info-value">{{ item.secret || '-' }}</span>
-              </div>
-              <div class="info-row">
-                <span class="info-label">@手机号</span>
-                <span class="info-value">{{ item.at_mobiles || '-' }}</span>
-              </div>
-            </div>
-
-            <div class="notify-footer">
+            <template #footer>
               <el-button text type="primary" size="small" @click="openForm(item)">
                 <el-icon><Edit /></el-icon> 编辑
               </el-button>
@@ -52,8 +50,8 @@
               <el-button text type="danger" size="small" @click="handleDelete(item)">
                 <el-icon><Delete /></el-icon> 删除
               </el-button>
-            </div>
-          </div>
+            </template>
+          </ConfigCard>
         </el-col>
 
         <el-col :span="24" v-if="!loading && !notifications.length">
@@ -64,11 +62,11 @@
 
     <!-- 编辑弹窗 -->
     <NotificationForm
-      v-if="formVisible"
-      :visible="formVisible"
-      :notification="currentNotification"
-      @close="formVisible = false"
-      @saved="onSaved"
+      v-if="formDialog.visible.value"
+      :visible="formDialog.visible.value"
+      :notification="formDialog.currentItem.value"
+      @close="formDialog.closeForm()"
+      @saved="formDialog.onSaved(loadData)"
     />
 
     <!-- 平台绑定弹窗 -->
@@ -85,23 +83,17 @@
 import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getNotifications, deleteNotification, updateNotification } from '@/api/notification'
+import { channelNames, channelIcons } from '@/utils/format'
+import ConfigCard from '@/components/common/ConfigCard.vue'
+import { useFormDialog } from '@/composables/useFormDialog'
 import NotificationForm from './NotificationForm.vue'
 import BindingConfig from './BindingConfig.vue'
 
-const channelNames = { dingtalk: '钉钉', feishu: '飞书', wecom: '企业微信', slack: 'Slack' }
-const channelIcon = {
-  dingtalk: { icon: 'ChatDotRound', color: '#0089FF' },
-  feishu: { icon: 'ChatLineRound', color: '#3370FF' },
-  wecom: { icon: 'ChatDotRound', color: '#07C160' },
-  slack: { icon: 'ChatLineRound', color: '#4A154B' }
-}
-
 const loading = ref(false)
 const notifications = ref([])
-const formVisible = ref(false)
 const bindingVisible = ref(false)
-const currentNotification = ref(null)
 const currentChannelId = ref('')
+const formDialog = useFormDialog()
 
 async function loadData() {
   loading.value = true
@@ -114,8 +106,7 @@ async function loadData() {
 }
 
 function openForm(notification = null) {
-  currentNotification.value = notification
-  formVisible.value = true
+  formDialog.openForm(notification)
 }
 
 function viewBindings(channel) {
@@ -144,11 +135,6 @@ async function handleDelete(item) {
   } catch { /* 已处理 */ }
 }
 
-function onSaved() {
-  formVisible.value = false
-  loadData()
-}
-
 onMounted(loadData)
 </script>
 
@@ -157,24 +143,6 @@ onMounted(loadData)
   font-size: 16px;
   font-weight: 600;
   color: #303133;
-}
-
-.notify-card {
-  background: $card-bg;
-  border: 1px solid #ebeef5;
-  border-radius: $border-radius;
-  margin-bottom: 16px;
-  transition: box-shadow 0.2s;
-  overflow: hidden;
-
-  &:hover {
-    box-shadow: $card-shadow;
-  }
-}
-
-.notify-header {
-  padding: 16px 20px 12px;
-  border-bottom: 1px solid #f0f0f0;
 }
 
 .notify-info {
@@ -193,10 +161,6 @@ onMounted(loadData)
   font-size: 13px;
   color: #909399;
   margin-top: 8px;
-}
-
-.notify-body {
-  padding: 12px 20px;
 }
 
 .info-row {
@@ -218,14 +182,5 @@ onMounted(loadData)
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.notify-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 4px;
-  padding: 8px 12px;
-  border-top: 1px solid #f0f0f0;
-  background: #fafafa;
 }
 </style>

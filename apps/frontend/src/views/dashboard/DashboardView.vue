@@ -157,7 +157,7 @@
         <div class="chart-card">
           <div class="card-header">
             <span class="card-title">系统状态</span>
-            <el-button text type="primary" :loading="healthLoading" @click="checkHealth">刷新</el-button>
+            <el-button text type="primary" :loading="healthLoading" @click="checkHealthStatus">刷新</el-button>
           </div>
           <div class="health-grid">
             <div class="health-item" v-for="(value, key) in healthData" :key="key">
@@ -189,9 +189,9 @@ import {
 } from 'echarts/components'
 import { getDashboardStats, getDashboardTrend, getCostAnalysis } from '@/api/dashboard'
 import { getReviews } from '@/api/reviews'
+import { checkHealth } from '@/api/health'
 import { formatDateTime } from '@/utils/format'
 import StatusTag from '@/components/common/StatusTag.vue'
-import axios from 'axios'
 
 use([CanvasRenderer, LineChart, PieChart, BarChart, TitleComponent, TooltipComponent, GridComponent, LegendComponent])
 
@@ -358,10 +358,10 @@ async function loadCostAnalysis() {
   }
 }
 
-async function checkHealth() {
+async function checkHealthStatus() {
   healthLoading.value = true
   try {
-    const res = await axios.get('/api/v1/health')
+    const res = await checkHealth()
     healthData.value = res.checks || res
   } catch {
     healthData.value = { database: false, notifications: false }
@@ -412,7 +412,7 @@ onMounted(() => {
   loadTrend()
   loadRecent()
   loadCostAnalysis()
-  checkHealth()
+  checkHealthStatus()
 })
 </script>
 

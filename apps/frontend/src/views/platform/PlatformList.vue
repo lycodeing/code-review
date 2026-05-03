@@ -11,8 +11,8 @@
       <!-- 平台卡片展示 -->
       <el-row :gutter="16" v-loading="loading">
         <el-col :xs="24" :sm="12" :lg="8" v-for="item in platforms" :key="item.platform">
-          <div class="platform-card">
-            <div class="platform-header">
+          <ConfigCard>
+            <template #header>
               <div class="platform-info">
                 <el-tag
                   :color="platformColors[item.platform]"
@@ -29,24 +29,22 @@
                 />
               </div>
               <p v-if="item.description" class="platform-desc">{{ item.description }}</p>
+            </template>
+
+            <div class="info-row">
+              <span class="info-label">API 地址</span>
+              <span class="info-value">{{ item.api_url || '-' }}</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">Access Token</span>
+              <span class="info-value">{{ item.access_token || '-' }}</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">Webhook Secret</span>
+              <span class="info-value">{{ item.webhook_secret || '-' }}</span>
             </div>
 
-            <div class="platform-body">
-              <div class="info-row">
-                <span class="info-label">API 地址</span>
-                <span class="info-value">{{ item.api_url || '-' }}</span>
-              </div>
-              <div class="info-row">
-                <span class="info-label">Access Token</span>
-                <span class="info-value">{{ item.access_token || '-' }}</span>
-              </div>
-              <div class="info-row">
-                <span class="info-label">Webhook Secret</span>
-                <span class="info-value">{{ item.webhook_secret || '-' }}</span>
-              </div>
-            </div>
-
-            <div class="platform-footer">
+            <template #footer>
               <el-button text type="primary" size="small" @click="openForm(item)">
                 <el-icon><Edit /></el-icon> 编辑
               </el-button>
@@ -56,8 +54,8 @@
               <el-button text type="danger" size="small" @click="handleDelete(item)">
                 <el-icon><Delete /></el-icon> 删除
               </el-button>
-            </div>
-          </div>
+            </template>
+          </ConfigCard>
         </el-col>
 
         <el-col :span="24" v-if="!loading && !platforms.length">
@@ -68,11 +66,11 @@
 
     <!-- 编辑弹窗 -->
     <PlatformForm
-      v-if="formVisible"
-      :visible="formVisible"
-      :platform="currentPlatform"
-      @close="formVisible = false"
-      @saved="onSaved"
+      v-if="formDialog.visible.value"
+      :visible="formDialog.visible.value"
+      :platform="formDialog.currentItem.value"
+      @close="formDialog.closeForm()"
+      @saved="formDialog.onSaved(loadData)"
     />
 
     <!-- 通知绑定弹窗 -->
@@ -90,15 +88,16 @@ import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getPlatforms, deletePlatform, updatePlatform } from '@/api/platforms'
 import { platformColors, platformNames } from '@/utils/format'
+import ConfigCard from '@/components/common/ConfigCard.vue'
+import { useFormDialog } from '@/composables/useFormDialog'
 import PlatformForm from './PlatformForm.vue'
 import BindingConfig from '../notification/BindingConfig.vue'
 
 const loading = ref(false)
 const platforms = ref([])
-const formVisible = ref(false)
 const bindingVisible = ref(false)
-const currentPlatform = ref(null)
 const currentPlatformId = ref('')
+const formDialog = useFormDialog()
 
 async function loadData() {
   loading.value = true
@@ -111,8 +110,7 @@ async function loadData() {
 }
 
 function openForm(platform = null) {
-  currentPlatform.value = platform
-  formVisible.value = true
+  formDialog.openForm(platform)
 }
 
 function viewDetail(platform) {
@@ -141,11 +139,6 @@ async function handleDelete(item) {
   } catch { /* 已处理 */ }
 }
 
-function onSaved() {
-  formVisible.value = false
-  loadData()
-}
-
 onMounted(loadData)
 </script>
 
@@ -154,24 +147,6 @@ onMounted(loadData)
   font-size: 16px;
   font-weight: 600;
   color: #303133;
-}
-
-.platform-card {
-  background: $card-bg;
-  border: 1px solid #ebeef5;
-  border-radius: $border-radius;
-  margin-bottom: 16px;
-  transition: box-shadow 0.2s;
-  overflow: hidden;
-
-  &:hover {
-    box-shadow: $card-shadow;
-  }
-}
-
-.platform-header {
-  padding: 16px 20px 12px;
-  border-bottom: 1px solid #f0f0f0;
 }
 
 .platform-info {
@@ -184,10 +159,6 @@ onMounted(loadData)
   font-size: 13px;
   color: #909399;
   margin-top: 8px;
-}
-
-.platform-body {
-  padding: 12px 20px;
 }
 
 .info-row {
@@ -209,14 +180,5 @@ onMounted(loadData)
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.platform-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 4px;
-  padding: 8px 12px;
-  border-top: 1px solid #f0f0f0;
-  background: #fafafa;
 }
 </style>
