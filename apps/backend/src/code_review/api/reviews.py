@@ -1,4 +1,4 @@
-"""评审任务 API 端点及系统健康检查。"""
+"""评审任务 API 端点。"""
 
 import logging
 from datetime import datetime, timedelta
@@ -688,24 +688,3 @@ async def check_review_timeouts(request: Request):
             await session.commit()
 
     return {"checked": True, "timed_out": count, "timeout_seconds": timeout_seconds}
-
-
-@router.get("/health")
-async def health_check(request: Request):
-    checks = {"database": False}
-    try:
-        session_factory = request.app.state.session_factory
-        async with session_factory() as session:
-            await session.execute(select(func.count()).select_from(Project))
-            checks["database"] = True
-    except Exception as e:
-        logger.error("Database health check failed: %s", e)
-
-    notification_manager = request.app.state.notification_manager
-    checks["notifications"] = await notification_manager.health_check()
-
-    all_healthy = all(
-        v if isinstance(v, bool) else all(v.values())
-        for v in checks.values()
-    )
-    return {"status": "healthy" if all_healthy else "degraded", "checks": checks}

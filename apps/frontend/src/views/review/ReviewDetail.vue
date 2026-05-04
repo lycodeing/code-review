@@ -112,10 +112,12 @@
           <el-card shadow="never" class="detail-card">
             <div v-if="comments.length" class="comment-filter-bar">
               <el-select v-model="commentSeverityFilter" placeholder="严重程度" clearable size="small" style="width: 140px">
-                <el-option label="严重" value="critical" />
-                <el-option label="警告" value="warning" />
-                <el-option label="建议" value="suggestion" />
-                <el-option label="信息" value="info" />
+                <el-option
+                  v-for="item in severityOptions"
+                  :key="item.value"
+                  :label="item.label"
+                  :value="item.value"
+                />
               </el-select>
               <el-input v-model="commentFileSearch" placeholder="搜索文件路径" clearable size="small" style="width: 240px; margin-left: 8px" />
               <el-radio-group v-model="commentViewMode" size="small" style="margin-left: auto">
@@ -235,7 +237,7 @@ import { ElMessage } from 'element-plus'
 import { RefreshRight, Bell, Document, Clock, Loading } from '@element-plus/icons-vue'
 import { getReview, getReviewComments, retryReview, sendReviewNotification, updateCommentFeedback, getReviewRevisions } from '@/api/reviews'
 import { getReviewLogs } from '@/api/logs'
-import { formatDateTime, callLogStatusMap as logStatusMap, callTypeMap } from '@/utils/format'
+import { formatDateTime, callLogStatusMap as logStatusMap, callTypeMap, severityMap, mapToOptions } from '@/utils/format'
 import { renderMarkdown } from '@/utils/markdown'
 import StatusTag from '@/components/common/StatusTag.vue'
 import CommentItem from '@/components/common/CommentItem.vue'
@@ -243,6 +245,7 @@ import LogDetailDrawer from '@/components/common/LogDetailDrawer.vue'
 import 'highlight.js/styles/github-dark.css'
 
 const route = useRoute()
+const severityOptions = mapToOptions(severityMap)
 const loading = ref(true)
 const detail = ref({})
 const comments = ref([])

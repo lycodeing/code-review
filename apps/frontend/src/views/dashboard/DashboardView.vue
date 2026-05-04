@@ -190,7 +190,7 @@ import {
 import { getDashboardStats, getDashboardTrend, getCostAnalysis } from '@/api/dashboard'
 import { getReviews } from '@/api/reviews'
 import { checkHealth } from '@/api/health'
-import { formatDateTime } from '@/utils/format'
+import { formatDateTime, severityMap, severityColors } from '@/utils/format'
 import StatusTag from '@/components/common/StatusTag.vue'
 
 use([CanvasRenderer, LineChart, PieChart, BarChart, TitleComponent, TooltipComponent, GridComponent, LegendComponent])
@@ -224,8 +224,6 @@ function rankBarWidth(count) {
 
 const severityOption = computed(() => {
   const dist = statsData.value?.severity_distribution || []
-  const colorMap = { critical: '#F56C6C', warning: '#E6A23C', suggestion: '#409EFF', info: '#909399' }
-  const labelMap = { critical: '严重', warning: '警告', suggestion: '建议', info: '信息' }
   return {
     tooltip: { trigger: 'item', formatter: '{b}: {c} ({d}%)' },
     legend: { bottom: 0, textStyle: { color: '#909399' } },
@@ -236,9 +234,9 @@ const severityOption = computed(() => {
       itemStyle: { borderRadius: 6, borderColor: '#fff', borderWidth: 2 },
       label: { show: false },
       data: dist.map(d => ({
-        name: labelMap[d.severity] || d.severity,
+        name: severityMap[d.severity]?.label || d.severity,
         value: d.count,
-        itemStyle: { color: colorMap[d.severity] || '#ccc' },
+        itemStyle: { color: severityColors[d.severity] || '#ccc' },
       })),
     }],
   }

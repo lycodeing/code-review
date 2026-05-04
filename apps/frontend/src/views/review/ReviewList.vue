@@ -15,12 +15,12 @@
         </el-form-item>
         <el-form-item label="状态">
           <el-select v-model="filters.status" placeholder="全部" clearable style="width: 140px">
-            <el-option label="等待中" value="pending" />
-            <el-option label="评审中" value="in_progress" />
-            <el-option label="已完成" value="completed" />
-            <el-option label="失败" value="failed" />
-            <el-option label="超时" value="timeout" />
-            <el-option label="已取消" value="cancelled" />
+            <el-option
+              v-for="item in reviewStatusOptions"
+              :key="item.value"
+              :label="item.label"
+              :value="item.value"
+            />
           </el-select>
         </el-form-item>
         <el-form-item label="MR 标题">
@@ -237,11 +237,12 @@ import { Plus, Delete, Refresh, Search, RefreshRight } from '@element-plus/icons
 import { getReviews, deleteReview, batchDeleteReviews, batchRetryReviews, deleteReviewsByDate, createManualReview, clearAllReviews, retryReview } from '@/api/reviews'
 import { getProjects } from '@/api/projects'
 import { useTable } from '@/composables/useTable'
-import { formatDateTime } from '@/utils/format'
+import { formatDateTime, reviewStatusMap, mapToOptions } from '@/utils/format'
 import StatusTag from '@/components/common/StatusTag.vue'
 
 const route = useRoute()
 const projectOptions = ref([])
+const reviewStatusOptions = mapToOptions(reviewStatusMap)
 
 const filters = ref({
   project_id: route.query.project_id || '',

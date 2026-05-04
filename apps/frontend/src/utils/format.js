@@ -11,16 +11,22 @@ export function formatDateTime(value) {
   })
 }
 
-/** 格式化日期 */
-export function formatDate(value) {
-  if (!value) return '-'
-  return new Date(value).toLocaleDateString('zh-CN')
+/** 格式化 JSON 对象为可读字符串 */
+export function formatJson(obj) {
+  if (!obj) return '(空)'
+  try {
+    return JSON.stringify(obj, null, 2)
+  } catch {
+    return String(obj)
+  }
 }
 
-/** 截断文本 */
-export function truncate(text, length = 50) {
-  if (!text) return '-'
-  return text.length > length ? text.substring(0, length) + '...' : text
+/** 从 map 生成 el-option 数组 { label, value } */
+export function mapToOptions(map, labelKey = 'label') {
+  return Object.entries(map).map(([value, item]) => ({
+    label: typeof item === 'string' ? item : item[labelKey],
+    value
+  }))
 }
 
 /** 平台标签颜色映射 */
@@ -56,11 +62,19 @@ export const severityMap = {
   info: { label: '提示', type: '' }
 }
 
+/** 严重程度颜色映射（ECharts 等场景使用） */
+export const severityColors = {
+  critical: '#F56C6C',
+  warning: '#E6A23C',
+  suggestion: '#409EFF',
+  info: '#909399'
+}
+
 /** 调用日志状态映射 */
 export const callLogStatusMap = {
   success: { label: '成功', type: 'success' },
   failed: { label: '失败', type: 'danger' },
-  in_progress: { label: '请求中', type: 'warning' },
+  in_progress: { label: '进行中', type: 'warning' },
   timeout: { label: '超时', type: 'danger' },
   pending: { label: '等待中', type: 'info' },
 }
@@ -79,7 +93,8 @@ export const providerColors = {
   ollama: '#000000',
   azure: '#0078d4',
   bedrock: '#232f3e',
-  dashscope: '#ff6a00'
+  dashscope: '#ff6a00',
+  zhipu: '#3b5cff'
 }
 
 /** LLM 提供商显示名称 */
@@ -99,7 +114,17 @@ export const channelNames = {
   dingtalk: '钉钉',
   feishu: '飞书',
   wecom: '企业微信',
-  slack: 'Slack'
+  slack: 'Slack',
+  email: '邮件'
+}
+
+/** 通知渠道颜色 */
+export const channelColors = {
+  dingtalk: '#0089FF',
+  feishu: '#3370FF',
+  wecom: '#07C160',
+  slack: '#4A154B',
+  email: '#909399'
 }
 
 /** 通知渠道图标和颜色 */
@@ -107,7 +132,8 @@ export const channelIcons = {
   dingtalk: { icon: 'ChatDotRound', color: '#0089FF' },
   feishu: { icon: 'ChatLineRound', color: '#3370FF' },
   wecom: { icon: 'ChatDotRound', color: '#07C160' },
-  slack: { icon: 'ChatLineRound', color: '#4A154B' }
+  slack: { icon: 'ChatLineRound', color: '#4A154B' },
+  email: { icon: 'Message', color: '#909399' }
 }
 
 /** 响应格式标签 */
@@ -128,12 +154,22 @@ export const responseFormatTypes = {
   plain_text: 'info'
 }
 
-/** 格式化 JSON 对象为可读字符串 */
-export function formatJson(obj) {
-  if (!obj) return '(空)'
-  try {
-    return JSON.stringify(obj, null, 2)
-  } catch {
-    return String(obj)
-  }
-}
+/** 启用/禁用选项 */
+export const enabledOptions = [
+  { label: '启用', value: 1 },
+  { label: '禁用', value: 0 }
+]
+
+/** 模板类别选项 */
+export const templateCategoryOptions = [
+  { label: '默认', value: 'default' },
+  { label: 'Python', value: 'python' },
+  { label: 'Java', value: 'java' },
+  { label: 'Go', value: 'go' }
+]
+
+/** 模板语言选项 */
+export const templateLanguageOptions = [
+  { label: '中文', value: 'zh' },
+  { label: 'English', value: 'en' }
+]

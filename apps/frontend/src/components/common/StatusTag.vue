@@ -21,7 +21,7 @@ const props = defineProps({
   type: { type: String, default: 'review' } // review | severity
 })
 
-const statusMap = props.type === 'severity' ? severityMap : reviewStatusMap
+const statusMap = computed(() => props.type === 'severity' ? severityMap : reviewStatusMap)
 
 const statusClass = computed(() => ({
   'status-tag--progress': props.status === 'in_progress',

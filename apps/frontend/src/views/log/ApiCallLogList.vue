@@ -5,15 +5,22 @@
       <el-form :model="filters" inline>
         <el-form-item label="类型">
           <el-select v-model="filters.call_type" placeholder="全部" clearable style="width: 130px">
-            <el-option label="AI 调用" value="llm" />
-            <el-option label="通知发送" value="notification" />
+            <el-option
+              v-for="item in callTypeOptions"
+              :key="item.value"
+              :label="item.label"
+              :value="item.value"
+            />
           </el-select>
         </el-form-item>
         <el-form-item label="结果">
           <el-select v-model="filters.status" placeholder="全部" clearable style="width: 120px">
-            <el-option label="成功" value="success" />
-            <el-option label="失败" value="failed" />
-            <el-option label="进行中" value="in_progress" />
+            <el-option
+              v-for="item in callLogStatusOptions"
+              :key="item.value"
+              :label="item.label"
+              :value="item.value"
+            />
           </el-select>
         </el-form-item>
         <el-form-item label="提供商">
@@ -126,10 +133,12 @@
 import { ref, onMounted } from 'vue'
 import { Search, Refresh, Loading } from '@element-plus/icons-vue'
 import { getApiCallLogs } from '@/api/logs'
-import { formatDateTime, callLogStatusMap, callTypeMap } from '@/utils/format'
+import { formatDateTime, callLogStatusMap, callTypeMap, mapToOptions } from '@/utils/format'
 import { useTable } from '@/composables/useTable'
 import LogDetailDrawer from '@/components/common/LogDetailDrawer.vue'
 
+const callTypeOptions = mapToOptions(callTypeMap)
+const callLogStatusOptions = mapToOptions(callLogStatusMap)
 const filters = ref({ call_type: '', status: '', provider: '' })
 
 const { loading, tableData, total, pagination, loadData, handlePageChange, handleSizeChange, resetPagination } = useTable(getApiCallLogs)

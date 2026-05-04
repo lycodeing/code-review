@@ -14,11 +14,14 @@
           :disabled="isEdit"
           style="width: 100%"
         >
-          <el-option label="钉钉" value="dingtalk" />
-          <el-option label="飞书" value="feishu" />
-          <el-option label="企业微信" value="wecom" />
-          <el-option label="Slack" value="slack" />
-          <el-option label="邮件" value="email" />
+          <!-- email 渠道尚未实现，暂时禁用 -->
+          <el-option
+            v-for="item in channelOptions"
+            :key="item.value"
+            :label="item.label"
+            :value="item.value"
+            :disabled="item.value === 'email'"
+          />
         </el-select>
       </el-form-item>
 
@@ -90,6 +93,9 @@
 import { ref, reactive, computed, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { createNotification, updateNotification } from '@/api/notification'
+import { channelNames, mapToOptions } from '@/utils/format'
+
+const channelOptions = mapToOptions(channelNames)
 
 const props = defineProps({
   visible: Boolean,

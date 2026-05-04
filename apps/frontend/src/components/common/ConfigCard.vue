@@ -12,9 +12,6 @@
   </div>
 </template>
 
-<script setup>
-</script>
-
 <style lang="scss" scoped>
 .config-card {
   background: $card-bg;

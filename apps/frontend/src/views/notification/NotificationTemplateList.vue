@@ -16,7 +16,7 @@
         <template v-else>
           <div class="channel-group" v-for="(group, channel) in groupedTemplates" :key="channel">
             <div class="channel-label">
-              <el-icon :color="channelColor[channel]"><Bell /></el-icon>
+              <el-icon :color="channelColors[channel]"><Bell /></el-icon>
               {{ channelNames[channel] || channel }}
             </div>
             <div
@@ -70,10 +70,12 @@
                 <el-col :span="8">
                   <el-form-item label="渠道">
                     <el-select v-model="form.channel" :disabled="!isCreating" style="width: 100%">
-                      <el-option label="钉钉" value="dingtalk" />
-                      <el-option label="飞书" value="feishu" />
-                      <el-option label="企业微信" value="wecom" />
-                      <el-option label="Slack" value="slack" />
+                      <el-option
+                        v-for="item in imChannelOptions"
+                        :key="item.value"
+                        :label="item.label"
+                        :value="item.value"
+                      />
                     </el-select>
                   </el-form-item>
                 </el-col>
@@ -204,9 +206,9 @@ import {
   deleteNotificationTemplate,
   previewNotificationTemplate,
 } from '@/api/notificationTemplates'
+import { channelNames, channelColors, mapToOptions } from '@/utils/format'
 
-const channelNames = { dingtalk: '钉钉', feishu: '飞书', wecom: '企业微信', slack: 'Slack' }
-const channelColor = { dingtalk: '#0089FF', feishu: '#3370FF', wecom: '#07C160', slack: '#4A154B' }
+const imChannelOptions = mapToOptions(channelNames).filter(item => item.value !== 'email')
 
 const loading = ref(false)
 const saving = ref(false)

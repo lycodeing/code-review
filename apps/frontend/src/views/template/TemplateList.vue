@@ -8,16 +8,22 @@
         </el-form-item>
         <el-form-item label="类别">
           <el-select v-model="filters.category" placeholder="全部" clearable style="width: 130px">
-            <el-option label="Python" value="python" />
-            <el-option label="Java" value="java" />
-            <el-option label="Go" value="go" />
-            <el-option label="默认" value="default" />
+            <el-option
+              v-for="item in templateCategoryOptions"
+              :key="item.value"
+              :label="item.label"
+              :value="item.value"
+            />
           </el-select>
         </el-form-item>
         <el-form-item label="语言">
           <el-select v-model="filters.locale" placeholder="全部" clearable style="width: 120px">
-            <el-option label="中文" value="zh" />
-            <el-option label="英文" value="en" />
+            <el-option
+              v-for="item in templateLanguageOptions"
+              :key="item.value"
+              :label="item.label"
+              :value="item.value"
+            />
           </el-select>
         </el-form-item>
         <el-form-item>
@@ -100,7 +106,7 @@ import { ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getTemplates, deleteTemplate } from '@/api/templates'
 import { useTable } from '@/composables/useTable'
-import { formatDateTime } from '@/utils/format'
+import { formatDateTime, templateCategoryOptions, templateLanguageOptions } from '@/utils/format'
 import TemplateForm from './TemplateForm.vue'
 
 const formVisible = ref(false)

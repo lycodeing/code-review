@@ -8,15 +8,22 @@
         </el-form-item>
         <el-form-item label="平台">
           <el-select v-model="filters.platform" placeholder="全部" clearable style="width: 140px">
-            <el-option label="GitHub" value="github" />
-            <el-option label="GitLab" value="gitlab" />
-            <el-option label="Gitee" value="gitee" />
+            <el-option
+              v-for="item in platformOptions"
+              :key="item.value"
+              :label="item.label"
+              :value="item.value"
+            />
           </el-select>
         </el-form-item>
         <el-form-item label="状态">
           <el-select v-model="filters.enabled" placeholder="全部" clearable style="width: 120px">
-            <el-option label="启用" :value="1" />
-            <el-option label="禁用" :value="0" />
+            <el-option
+              v-for="item in enabledOptions"
+              :key="item.value"
+              :label="item.label"
+              :value="item.value"
+            />
           </el-select>
         </el-form-item>
         <el-form-item>
@@ -171,13 +178,14 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Refresh, Edit, Delete, Cpu, Tickets, Bell, Setting } from '@element-plus/icons-vue'
 import { getProjects, deleteProject, updateProject, batchProjectAction } from '@/api/projects'
 import { useTable } from '@/composables/useTable'
-import { formatDateTime, platformColors, platformNames } from '@/utils/format'
+import { formatDateTime, platformColors, platformNames, mapToOptions, enabledOptions } from '@/utils/format'
 import ProjectForm from './ProjectForm.vue'
 import ProjectLLMBindings from './ProjectLLMBindings.vue'
 import ProjectTemplateBindings from './ProjectTemplateBindings.vue'
 import ProjectNotificationBindings from './ProjectNotificationBindings.vue'
 
 const router = useRouter()
+const platformOptions = mapToOptions(platformNames)
 const formVisible = ref(false)
 const llmBindingsVisible = ref(false)
 const promptBindingsVisible = ref(false)
